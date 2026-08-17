@@ -115,21 +115,26 @@ export default function SetupSteps() {
 
       <div className="panel">
         <h2 className="step">
-          <span className="step-n">3</span>Copy the environment variables
+          <span className="step-n">3</span>Check the columns were found
         </h2>
         <p>
-          Paste these into Vercel under <b>Settings → Environment Variables</b>,
-          then <b>Deployments → ⋯ → Redeploy</b>. The app reads them once at
-          start-up, so step 4 won&rsquo;t work until it restarts.
+          The app reads column IDs off the board by name, so there is nothing to
+          paste and no redeploy needed. This confirms it can see all of them —{" "}
+          <code>unmapped</code> should come back empty.
         </p>
         <button
           className="act ghost"
           disabled={results.env === "running"}
           onClick={() => go("env")}
         >
-          Show variables
+          Check columns
         </button>
         <Output result={results.env ?? null} />
+        <p style={{ marginTop: 14, marginBottom: 0, fontSize: 14 }}>
+          The <code>COLUMN_IDS</code> line in that output is optional — setting
+          it in Vercel pins the IDs so a renamed column can&rsquo;t silently
+          change what gets written. Everything works without it.
+        </p>
       </div>
 
       <div className="panel">

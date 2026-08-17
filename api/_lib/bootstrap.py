@@ -8,27 +8,7 @@ title does not already exist, so every function is safe to run twice.
 import secrets
 
 from . import config, installers
-
-# (config key, monday title, column type, defaults)
-ORDER_COLUMNS = [
-    ("eorder_file", "eOrder", "file", None),
-    ("eorder_status", "eOrder Status", "status",
-     {"labels": {"1": "✅ Read", "2": "⚠️ Check", "3": "❌ Failed"}}),
-    ("site_contact", "Site Contact", "text", None),
-    ("site_phone", "Site Phone", "phone", None),
-    ("site_email", "Site Email", "email", None),
-    ("site_address", "Site Address", "text", None),
-    ("installer_email", "Installer Email", "email", None),
-    ("install_required", "Install Required?", "status",
-     {"labels": {"1": "Yes", "2": "No", "3": "Customer self-install"}}),
-    ("vehicle_list", "Vehicle List", "file", None),
-    ("units_total", "Units Total", "numbers", None),
-    ("units_installed", "Units Installed", "numbers", None),
-    ("progress_updated", "Progress Updated", "date", None),
-    ("contacted_date", "Contacted Date", "date", None),
-    ("booked_date", "Booked Date", "date", None),
-    ("scheduled_install_date", "Scheduled Install Date", "date", None),
-]
+from .columns import INSTALLER_LINK_COLUMN, ORDER_COLUMNS, resolved
 
 INSTALLER_COLUMNS = [
     ("account_type", "Type", "status",
@@ -40,10 +20,6 @@ INSTALLER_COLUMNS = [
     ("region", "Region", "dropdown", None),
     ("active", "Active", "checkbox", None),
 ]
-
-# The "Installer" connect-boards column is created separately — it needs the
-# Installer Accounts board to exist first.
-INSTALLER_LINK_COLUMN = ("installer", "Installer", "board_relation")
 
 SEED_ACCOUNTS = [
     ("Dan Wells", "Sole operator"),
@@ -294,12 +270,7 @@ def eorder_column_id(monday, board_id=None):
     COLUMN_IDS has been pasted into the environment — otherwise step 6 depends
     on a redeploy that hasn't happened yet.
     """
-    if config.COLUMNS.get("eorder_file"):
-        return config.COLUMNS["eorder_file"]
-    for column in monday.board_columns(board_id or config.ORDERS_BOARD_ID):
-        if column["type"] == "file" and column["title"].strip().lower() == "eorder":
-            return column["id"]
-    return None
+    return resolved(monday, board_id, force=True).get("eorder_file")
 
 
 def register_webhook(monday, url, board_id=None, file_column_id=None):

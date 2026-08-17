@@ -271,21 +271,17 @@ Read it. Anything already there shows as `exists` and is left alone.
 the missing columns and shows the ID of each. Nothing existing is renamed,
 moved or deleted.
 
-**3 — Copy the environment variables.** Press **Show variables**, then
-**Copy**. You get a line like:
+**3 — Check the columns were found.** Press **Check columns**. You want
+`unmapped: []`.
 
-```
-COLUMN_IDS={"opportunity_id":"order__","eorder_file":"file_mkq1234",…}
-```
+The app reads column IDs off the board by name, so there is nothing to paste
+and no redeploy needed at this step. The `COLUMN_IDS` line in the output is
+optional — setting it in Vercel pins the IDs, so that if someone later renames
+a column the automation keeps writing to the right one instead of quietly
+stopping. Worth doing eventually, not now.
 
-Back in Vercel:
-
-1. **Settings → Environment Variables**
-2. Add `COLUMN_IDS` — everything after the `=`, curly brackets included, all on
-   one line
-3. **Deployments →** the top one **→ ⋯ → Redeploy**
-
-**That redeploy is not optional.** The app reads this once at start-up.
+If `unmapped` is not empty, step 2 didn't create everything. Run step 1 again
+and compare.
 
 **4 — Switch the automation on.** Paste your app address into the box — just
 the address, no `/setup` on the end — and press **Register webhook**.
@@ -403,8 +399,10 @@ long it took.
 | Yellow bar saying setup isn't finished | Work through Part 6. It disappears on its own. |
 | Setup page says SETUP_KEY isn't set | You added it but didn't redeploy. Deployments → ⋯ → Redeploy. |
 | `missing_secrets` on `/api/py/health` | A variable didn't save, or has a space in it. Fix, then redeploy. |
+| `unmapped_columns` still full after step 2 | A column was created with a different title. `/api/py/health` now lists every ID it resolved and where from — compare against step 1. |
+| `orders_board` is not the board you expected | `ORDERS_BOARD_ID` points somewhere else. The ID is the long number in the board's URL. |
 | Nothing happens when I drop a file | Step 6 wasn't run, or ran with the wrong address. Run it again. |
-| Row fills in but eOrder Status stays blank | `COLUMN_IDS` is missing or stale. Re-run step 4 and redeploy. |
+| Row fills in but eOrder Status stays blank | The column was renamed. It must be a **Status** column titled exactly `eOrder Status`. Press step 3 to confirm what the app can see. |
 | Portal says "This link no longer works" | Step 5 hasn't been run since that account was added, or the token changed. |
 | Portal loads but shows no jobs | Nothing is allocated to that account. Set the **Installer** column on a row in TN Orders. |
 | `NotImplementedError` about the parser | Part 2. |

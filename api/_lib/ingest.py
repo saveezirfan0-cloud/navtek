@@ -15,6 +15,7 @@ import time
 import traceback
 from datetime import datetime
 
+from . import columns as columns_mod
 from . import config, installers, mapping
 from .monday import Monday
 from .store import Store, sha256
@@ -73,7 +74,8 @@ def handle_webhook(payload, monday=None, store=None):
     if not item_id:
         return {"ok": False, "reason": "no pulseId in payload"}
 
-    file_column = config.COLUMNS.get("eorder_file") or event.get("columnId")
+    cols = columns_mod.resolved(monday, board_id)
+    file_column = cols.get("eorder_file") or event.get("columnId")
     if not file_column:
         return {"ok": False, "reason": "eOrder file column id is not configured"}
 
@@ -90,7 +92,7 @@ def handle_webhook(payload, monday=None, store=None):
         file_sha = sha256(blob)
 
     except Exception as exc:  # noqa: BLE001 - report every failure to the user
-        _fail(monday, board_id, item_id, f"Could not fetch the file: {exc}")
+        _fail(monday, board_id, item_id, f"Could not fetch the file: {exc}", cols)
         return {**result, "ok": False, "reason": str(exc)}
 
     # --- parse ---------------------------------------------------------
@@ -102,7 +104,7 @@ def handle_webhook(payload, monday=None, store=None):
         detail = f"{type(exc).__name__}: {exc}"
         _fail(
             monday, board_id, item_id,
-            f"This does not look like a Teletrac Navman eOrder.<br>{detail}",
+            f"This does not look like a Teletrac Navman eOrder.<br>{detail}", cols,
         )
         store.record_ingest(
             monday_item_id=item_id, monday_board_id=board_id,
@@ -119,7 +121,7 @@ def handle_webhook(payload, monday=None, store=None):
         _fail(
             monday, board_id, item_id,
             "No OPPORTUNITY ID in this file, so it cannot be matched to an "
-            "order. Nothing else on the row was changed.",
+            "order. Nothing else on the row was changed.", cols,
         )
         return {**result, "ok": False, "reason": "no opportunity_id"}
 
@@ -158,19 +160,19 @@ def handle_webhook(payload, monday=None, store=None):
     status, warnings = mapping.validate(parsed, installer_match)
 
     # --- find or create the row ----------------------------------------
-    target_id, created = _resolve_item(monday, board_id, item_id, opportunity_id)
+    target_id, created = _resolve_item(monday, board_id, item_id, opportunity_id, cols)
     result["target_item_id"] = target_id
     result["created"] = created
 
     existing = monday.item(target_id) or {}
     existing_text = {c["id"]: c.get("text") for c in existing.get("column_values", [])}
 
-    proposed = mapping.to_column_values(parsed, installer_item_ids=installer_ids)
+    proposed = mapping.to_column_values(parsed, cols, installer_item_ids=installer_ids)
     # A revised eOrder is allowed to correct fields; a first read only fills gaps.
     values = proposed if changes else mapping.merge_preserving(proposed, existing_text)
 
-    if config.COLUMNS.get("eorder_status"):
-        values[config.COLUMNS["eorder_status"]] = mapping.v_status(status)
+    if cols.get("eorder_status"):
+        values[cols["eorder_status"]] = mapping.v_status(status)
 
     if values:
         monday.set_columns(board_id, target_id, values)
@@ -182,7 +184,7 @@ def handle_webhook(payload, monday=None, store=None):
     # --- multi-site subitems (§8.4) ------------------------------------
     sites = parsed.get("multi_site") or []
     if sites:
-        result["subitems"] = _sync_subitems(monday, target_id, sites)
+        result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
 
     # --- feedback -------------------------------------------------------
     monday.post_update(
@@ -215,14 +217,14 @@ def _acv_reason_known(order_reason):
     }
 
 
-def _resolve_item(monday, board_id, dropped_on_item_id, opportunity_id):
+def _resolve_item(monday, board_id, dropped_on_item_id, opportunity_id, cols):
     """Normal case: they just made a row and dropped the file on it.
 
     If that row is blank we use it. If the opportunity already lives on a
     different row we write there instead, so a re-drop onto a fresh row updates
     the real order rather than forking it.
     """
-    column_id = config.COLUMNS.get("opportunity_id")
+    column_id = cols.get("opportunity_id")
     if column_id:
         matches = monday.find_by_column_value(board_id, column_id, opportunity_id)
         for existing in matches:
@@ -231,7 +233,7 @@ def _resolve_item(monday, board_id, dropped_on_item_id, opportunity_id):
     return dropped_on_item_id, False
 
 
-def _sync_subitems(monday, parent_id, sites):
+def _sync_subitems(monday, parent_id, sites, cols):
     """One subitem per delivery site, each with its own SLA clock."""
     existing = {s["name"]: s for s in monday.subitems(parent_id)}
     written = []
@@ -239,16 +241,16 @@ def _sync_subitems(monday, parent_id, sites):
         name = mapping.subitem_name(site, index)
         if name in existing:
             continue
-        values = mapping.subitem_values(site)
+        values = mapping.subitem_values(site, cols)
         created = monday.create_subitem(parent_id, name, values)
         written.append({"id": created["id"], "name": name})
     return written
 
 
-def _fail(monday, board_id, item_id, message):
+def _fail(monday, board_id, item_id, message, cols=None):
     """Set ❌ Failed and say why. Never touch anything else on the row (§5)."""
     try:
-        column_id = config.COLUMNS.get("eorder_status")
+        column_id = (cols or config.COLUMNS).get("eorder_status")
         if column_id:
             monday.set_columns(
                 board_id, item_id, {column_id: mapping.v_status(mapping.STATUS_FAILED)}

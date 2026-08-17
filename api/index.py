@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 
-from _lib import bootstrap, config, portal  # noqa: E402
+from _lib import bootstrap, columns as columns_mod, config, portal  # noqa: E402
 from _lib.ingest import handle_webhook  # noqa: E402
 from _lib.monday import Monday, MondayError  # noqa: E402
 from _lib.store import Store  # noqa: E402
@@ -49,12 +49,26 @@ async def _any_error(request, exc):
 
 @app.get("/api/py/health")
 def health():
-    unmapped = [k for k, v in config.COLUMNS.items() if not v]
+    """What's configured, and where each column ID came from.
+
+    Column IDs are resolved live off the board, so this reflects what the
+    automation would actually use — not just what the environment supplies.
+    """
+    try:
+        cols = columns_mod.resolved(Monday(), force=True)
+        source = "board" if not config.COLUMNS.get("eorder_file") else "COLUMN_IDS"
+    except Exception as exc:  # noqa: BLE001
+        cols = config.COLUMNS
+        source = f"environment only — could not read the board: {exc}"
+
     return {
         "ok": not config.missing_secrets(),
         "missing_secrets": config.missing_secrets(),
-        "unmapped_columns": unmapped,
+        "unmapped_columns": columns_mod.unmapped(cols),
+        "column_ids": cols,
+        "column_ids_from": source,
         "orders_board": config.ORDERS_BOARD_ID,
+        "installers_board": config.INSTALLERS_BOARD_ID,
         "write_order_type": config.WRITE_ORDER_TYPE,
     }
 
@@ -209,6 +223,15 @@ def setup_installers(x_setup_key: str = Header(default="")):
     )
     result["installer_column_id"] = link["column_id"]
     return result
+
+
+@app.post("/api/py/setup/refresh")
+def setup_refresh(x_setup_key: str = Header(default="")):
+    """Drop the cached column map and read the board again."""
+    _setup_guard(x_setup_key)
+    columns_mod.clear_cache()
+    cols = columns_mod.resolved(Monday(), force=True)
+    return {"columns": cols, "unmapped": columns_mod.unmapped(cols)}
 
 
 @app.get("/api/py/setup/env")

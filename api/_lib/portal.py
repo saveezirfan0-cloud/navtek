@@ -11,6 +11,7 @@ drives the red chip.
 
 from datetime import date, datetime, timedelta
 
+from . import columns as columns_mod
 from . import config, mapping
 
 SLA_BUSINESS_DAYS = 2
@@ -43,7 +44,8 @@ def jobs_for_account(monday, store, account):
     not the primary path, because a stale job list sends someone to a site that
     was reallocated last week.
     """
-    column_id = config.COLUMNS.get("installer")
+    cols = columns_mod.resolved(monday)
+    column_id = cols.get("installer")
     jobs = []
 
     if column_id:
@@ -66,7 +68,7 @@ def jobs_for_account(monday, store, account):
                 },
             )
             items = (raw.get("items_page_by_column_values") or {}).get("items") or []
-            jobs = [_shape(item) for item in items]
+            jobs = [_shape(item, cols) for item in items]
             for job in jobs:
                 store.cache_job(
                     job["item_id"], job, installer_account_id=account["id"]
@@ -96,13 +98,14 @@ def jobs_for_account(monday, store, account):
     }
 
 
-def _shape(item):
+def _shape(item, cols=None):
     """One monday item → the fields the portal card renders."""
-    cols = {c["id"]: c for c in item.get("column_values", [])}
+    cols = cols or config.COLUMNS
+    values = {c["id"]: c for c in item.get("column_values", [])}
 
     def text(key):
-        column_id = config.COLUMNS.get(key)
-        return cols.get(column_id, {}).get("text") if column_id else None
+        column_id = cols.get(key)
+        return values.get(column_id, {}).get("text") if column_id else None
 
     dispatched = text("order_date")
     contacted = text("contacted_date")
@@ -159,11 +162,12 @@ def apply_action(monday, store, account, item_id, action, value=None, note=None)
     if action not in ACTIONS:
         raise ValueError(f"unknown action: {action}")
 
+    cols = columns_mod.resolved(monday)
     today = date.today().isoformat()
     values = {}
 
     def put(key, encoded):
-        column_id = config.COLUMNS.get(key)
+        column_id = cols.get(key)
         if column_id and encoded is not None:
             values[column_id] = encoded
 
