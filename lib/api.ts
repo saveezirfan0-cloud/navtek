@@ -107,6 +107,7 @@ export type Ingest = {
 export type Health = {
   ok: boolean;
   missing_secrets: string[];
+  config_warnings?: string[];
   unmapped_columns: string[];
   orders_board: number;
   write_order_type: boolean;

@@ -26,6 +26,7 @@ export default async function Dashboard() {
     failed: rows.filter((r) => r.status === "failed").length,
   };
 
+  const warnings = health?.config_warnings ?? [];
   const notReady =
     !health || health.missing_secrets.length > 0 || health.unmapped_columns.length > 0;
 
@@ -40,6 +41,16 @@ export default async function Dashboard() {
             someone dropping a file on the eOrder column in monday.
           </p>
         </div>
+
+        {warnings.length > 0 && (
+          <div className="panel">
+            {warnings.map((w, i) => (
+              <div className="warnbox" key={i} style={{ marginBottom: 0 }}>
+                <b>Check a setting.</b> {w}
+              </div>
+            ))}
+          </div>
+        )}
 
         {notReady && (
           <div className="panel">

@@ -69,14 +69,74 @@ _DEFAULT_COLUMNS = {
 }
 
 
+def _parse_column_ids(raw):
+    """Read COLUMN_IDS as leniently as possible. Never raise.
+
+    This value is copied out of a web page and pasted into a settings box, so
+    the failure modes are paste failures, not programming errors: the whole
+    `NAME=value` line pasted into the value box, two lines pasted at once,
+    stray quotes from a shell, trailing whitespace.
+
+    An earlier version raised RuntimeError here. Because every module imports
+    this one, a mistyped environment variable took down the entire
+    application — every route returning a bare HTTP 500 with no body, since
+    the crash happened at import before any error handler existed. A bad
+    setting should degrade one feature, never the whole app, so this now
+    returns a warning and carries on. The IDs are resolved from the board
+    anyway (see columns.py); COLUMN_IDS is only an override.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return {}, None
+
+    # Two variables pasted at once — keep the line that has our JSON on it.
+    if "\n" in text:
+        for line in text.splitlines():
+            if "{" in line:
+                text = line.strip()
+                break
+
+    # The whole `COLUMN_IDS={...}` line pasted into the value box.
+    for prefix in ("COLUMN_IDS=", "column_ids=", "COLUMN_IDS ="):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+
+    # Shell-style quoting picked up on the way through.
+    if len(text) > 1 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+
+    if not text:
+        return {}, None
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return {}, (
+            f"COLUMN_IDS could not be read ({exc}). It is being ignored and "
+            f"column IDs are coming from the board instead. Expected a single "
+            f"line starting with {{ — check nothing extra was pasted with it. "
+            f"Value starts: {text[:40]!r}"
+        )
+
+    if not isinstance(parsed, dict):
+        return {}, f"COLUMN_IDS should be a JSON object, got {type(parsed).__name__}. Ignoring it."
+
+    unknown = [k for k in parsed if k not in _DEFAULT_COLUMNS]
+    warning = f"COLUMN_IDS contains unrecognised keys, ignored: {', '.join(unknown)}" if unknown else None
+    return {k: v for k, v in parsed.items() if v and k in _DEFAULT_COLUMNS}, warning
+
+
+# Problems worth telling someone about, surfaced by /health and the dashboard
+# rather than thrown.
+CONFIG_WARNINGS = []
+
+
 def _load_columns():
     cols = dict(_DEFAULT_COLUMNS)
-    raw = os.environ.get("COLUMN_IDS", "")
-    if raw:
-        try:
-            cols.update({k: v for k, v in json.loads(raw).items() if v})
-        except json.JSONDecodeError as exc:  # pragma: no cover - config error
-            raise RuntimeError(f"COLUMN_IDS is not valid JSON: {exc}") from exc
+    overrides, warning = _parse_column_ids(os.environ.get("COLUMN_IDS", ""))
+    if warning:
+        CONFIG_WARNINGS.append(warning)
+    cols.update(overrides)
     return cols
 
 

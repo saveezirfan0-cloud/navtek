@@ -62,8 +62,9 @@ def health():
         source = f"environment only — could not read the board: {exc}"
 
     return {
-        "ok": not config.missing_secrets(),
+        "ok": not config.missing_secrets() and not config.CONFIG_WARNINGS,
         "missing_secrets": config.missing_secrets(),
+        "config_warnings": config.CONFIG_WARNINGS,
         "unmapped_columns": columns_mod.unmapped(cols),
         "column_ids": cols,
         "column_ids_from": source,
