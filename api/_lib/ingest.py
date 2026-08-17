@@ -20,13 +20,18 @@ from . import config, installers, mapping
 from .monday import Monday
 from .store import Store, sha256
 
-try:
-    from .eorder_parser import ACV_ORDER_REASONS, parse
-except ImportError as exc:  # pragma: no cover - deployment guard
-    raise ImportError(
-        "api/_lib/eorder_parser.py is missing. Drop the reference implementation in "
-        "unchanged — do not rewrite it. See README, 'The parser'."
-    ) from exc
+def _parser():
+    """Import the parser on first use, not at module import.
+
+    The parser is the only thing in this app that needs openpyxl. Importing it
+    at module level means one missing dependency takes down every route —
+    health, the setup console, the dashboard — each returning a bare 500 with
+    no body, because the crash happens before any error handler exists to
+    explain it. Deferring the import keeps the rest of the app alive and makes
+    the failure attributable to the one endpoint that actually needs it.
+    """
+    from . import eorder_parser
+    return eorder_parser
 
 
 MONTHS = [
@@ -99,7 +104,7 @@ def handle_webhook(payload, monday=None, store=None):
     try:
         import io
 
-        parsed = parse(io.BytesIO(blob))
+        parsed = _parser().parse(io.BytesIO(blob))
     except Exception as exc:  # noqa: BLE001
         detail = f"{type(exc).__name__}: {exc}"
         _fail(
@@ -213,7 +218,7 @@ def handle_webhook(payload, monday=None, store=None):
 
 def _acv_reason_known(order_reason):
     return str(order_reason).strip().lower() in {
-        r.strip().lower() for r in ACV_ORDER_REASONS
+        r.strip().lower() for r in _parser().ACV_ORDER_REASONS
     }
 
 

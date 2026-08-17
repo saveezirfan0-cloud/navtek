@@ -406,12 +406,18 @@ long it took.
 | Portal says "This link no longer works" | Step 5 hasn't been run since that account was added, or the token changed. |
 | Portal loads but shows no jobs | Nothing is allocated to that account. Set the **Installer** column on a row in TN Orders. |
 | `NotImplementedError` about the parser | Part 2. |
-| File tester says it got a web page back | The Python function isn't running. Check `requirements.txt` is at the top level of the repository and `api/_lib` uploaded with all ten `.py` files, then redeploy. The tester now names which of the two it is. |
+| Every button returns a bare `HTTP 500` | The Python function is failing to start. Open `/api/py/diag` — it names the missing package or file. |
+| Diag says a package is missing | `requirements.txt` isn't being installed. It must be at the top level of the repository; there is also a copy at `api/requirements.txt`. Confirm both uploaded, then redeploy. |
+| Diag says a file is missing from `api/_lib` | Upload it. Folders beginning with an underscore are easy to miss in a drag-and-drop upload. |
 | A second Installer Accounts board appeared | `INSTALLERS_BOARD_ID` wasn't set before step 3. Set it, redeploy, delete the empty duplicate, run step 3 again. |
 | Step 6: no file column called 'eOrder' | Step 2 hasn't run, or the column was renamed. It must be a **File** column titled exactly `eOrder`. |
 | Build fails mentioning `app/api` | Someone added a route handler under `app/api`. This project can't use those — see the note in `next.config.mjs`. |
 
-**Where to look:** Vercel → your project → **Logs**. Every request is there
+**First stop: `/api/py/diag`.** Open it on your app address. It is a separate
+function with no dependencies, so it answers even when everything else returns
+a blank HTTP 500, and it tells you which package or file is missing.
+
+**Then:** Vercel → your project → **Logs**. Every request is there
 with its error. In monday, the Update on the item explains what happened in
 plain English — that's the first place to look, not the last.
 

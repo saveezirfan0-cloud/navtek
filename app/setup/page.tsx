@@ -17,6 +17,14 @@ export default function SetupPage() {
             alone.
           </p>
         </div>
+        <div className="panel" style={{ paddingTop: 14, paddingBottom: 14 }}>
+          <p style={{ margin: 0, fontSize: 14.5, color: "var(--mid)" }}>
+            Buttons returning <b>HTTP 500</b> with nothing else?{" "}
+            <a href="/api/py/diag" target="_blank">Run the diagnostic</a> — it is
+            a separate function that still answers when this one cannot start,
+            and it names the cause.
+          </p>
+        </div>
         {configured ? (
           <SetupSteps />
         ) : (
