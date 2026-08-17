@@ -26,7 +26,7 @@ KANE = {
     "company": "KANE CIVIL PTY LTD",
     "derived_item_name": "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551",
     "order_reason": "New Business",
-    "order_date": "2026-07-02",
+    "order_date": "July 2, 2026",   # the eOrder's actual format
     "site_contact_name": "Gerard Cahalan",
     "site_contact_phone": "0437353834",
     "site_phone_e164": "+61437353834",
@@ -39,11 +39,13 @@ KANE = {
     "install_required": "Yes",
     "acv": 18144.0,
     "install_value": 8000,
-    "line_items": [
-        {"code": "RE400", "product": "RE400 Ranger", "qty": 18},
-        {"code": "VT202", "product": "VT202 Tracker", "qty": 22},
-        {"code": "AT551", "product": "AT551 Camera", "qty": 4},
-        {"code": None, "product": "Internal Use Only - Commissions & Fees", "qty": 1},
+    # Real shape, taken from a parser run against the Kane Civil eOrder:
+    # the key is `lines`, each entry is {qty, product}, and there is no `code`.
+    "lines": [
+        {"qty": 18, "product": "RE 400 with TN360"},
+        {"qty": 22, "product": "VT202 VLU with TN360"},
+        {"qty": 4, "product": "AT551 Asset Tracker Service"},
+        {"qty": 1, "product": "Internal Use Only - Commissions & Fees"},
     ],
     "multi_site": [],
     "vehicles": [],
@@ -80,7 +82,16 @@ def test_phone_refuses_junk_rather_than_emitting_broken_value():
     assert mapping.v_phone("n/a") is None
 
 
-def test_date_accepts_the_australian_ordering():
+def test_date_reads_the_format_the_eorder_actually_uses():
+    # Regression: the eOrder writes "July 2, 2026". An earlier version of this
+    # only handled ISO and slash formats, so ORDER PLACED was silently never
+    # written — no error, just a permanently empty column.
+    assert mapping.v_date("July 2, 2026") == {"date": "2026-07-02"}
+    assert mapping.v_date("July 27, 2026") == {"date": "2026-07-27"}
+    assert mapping.v_date("Jul 2, 2026") == {"date": "2026-07-02"}
+
+
+def test_date_still_accepts_other_orderings():
     assert mapping.v_date("02/07/2026") == {"date": "2026-07-02"}
     assert mapping.v_date("2026-07-02") == {"date": "2026-07-02"}
 
@@ -98,7 +109,7 @@ def test_units_total_excludes_the_commissions_line():
 
 
 def test_units_total_is_none_not_zero_when_there_are_no_lines():
-    assert mapping.units_total({"line_items": []}) is None
+    assert mapping.units_total({"lines": []}) is None
 
 
 # -- the mapping -----------------------------------------------------------
@@ -141,10 +152,24 @@ def test_a_clean_order_reads_clean():
 
 def test_a_missing_installer_is_not_an_error():
     # Only 1 of 5 sample orders named one — this is the normal case (§8.1).
+    # "nothing_to_ship" is the parser's actual value; "nothing" was a guess.
     no_installer = {**KANE, "installer_company": "Nothing to Ship",
-                    "ship_to_type": "nothing"}
-    status, _ = mapping.validate(no_installer)
-    assert status == mapping.STATUS_READ
+                    "ship_to_type": "nothing_to_ship"}
+    status, warnings = mapping.validate(no_installer)
+    assert status == mapping.STATUS_READ, warnings
+
+
+def test_an_empty_ship_to_is_flagged():
+    blank = {**KANE, "installer_company": None, "ship_to_type": "unknown"}
+    status, warnings = mapping.validate(blank)
+    assert status == mapping.STATUS_CHECK
+    assert any("ship-to is blank" in w for w in warnings)
+
+
+def test_update_line_summary_uses_the_parser_product_codes():
+    body = mapping.update_body(KANE, mapping.STATUS_READ, [], 14)
+    assert "18 × RE400" in body and "4 × AT551" in body
+    assert "with TN360" not in body
 
 
 def test_missing_opportunity_id_fails_hard():
@@ -226,7 +251,7 @@ def test_update_names_the_installer_and_the_site_contact():
 
 
 def test_update_lists_what_changed_on_a_revision():
-    revised = {**KANE, "line_items": [{"code": "RE400", "product": "RE400", "qty": 20}]}
+    revised = {**KANE, "lines": [{"qty": 20, "product": "RE 400 with TN360"}]}
     changes = mapping.diff_against(KANE, revised)
     body = mapping.update_body(revised, mapping.STATUS_READ, [], 14, changes)
     assert "Changed since the previous eOrder" in body

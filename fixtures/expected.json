@@ -12,7 +12,6 @@
     "confidentiality, so that ACV branch has no sample exercising it. Get one",
     "into this set before go-live (brief §4.1)."
   ],
-
   "KANE_CIVIL_PTY_LTD__2_07_2026__EOrder.xlsx": {
     "opportunity_id": "006VP00000agsnG",
     "order_reason": "New Business",
@@ -23,7 +22,6 @@
     "vehicles": [],
     "_expect_multi_site_count": 0
   },
-
   "Qualityvend_Pty_Ltd__4_05_2026__EOrder.xlsx": {
     "opportunity_id": "006VP00000Xshcr",
     "company": "Qualityvend Pty Ltd",
@@ -34,29 +32,26 @@
     "vehicles": [],
     "_expect_multi_site_count": 4
   },
-
   "AGB_INVESTMENT_GROUP_PTY_LTD__27_07_2026__EOrder.xlsx": {
     "opportunity_id": "006VP00000bowJd",
     "order_reason": "Change of Ownership",
     "install_required": "No",
-    "ship_to_type": "nothing",
+    "ship_to_type": "nothing_to_ship",
     "acv": null,
     "derived_item_name": "AGB INVESTMENT GROUP = 1 x VT102, 1 x TMA Basic",
     "vehicles": [],
     "_expect_multi_site_count": 0
   },
-
   "Southern_Truck_Centre__2_07_2026__EOrder.xlsx": {
     "opportunity_id": "006VP00000aa0Kv",
     "order_reason": "Service Only Renewal",
     "install_required": "No",
-    "ship_to_type": "nothing",
+    "ship_to_type": "nothing_to_ship",
     "acv": null,
     "derived_item_name": "SOUTHERN TRUCK CENTRE = 13 x VT102",
     "vehicles": [],
     "_expect_multi_site_count": 0
   },
-
   "Cosmo_Cranes_Pty_Ltd__13_05_2026__EOrder.xlsx": {
     "order_reason": "Hardware Only (Replacement unit)",
     "install_required": "Customer self-install",

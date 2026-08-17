@@ -10,7 +10,7 @@ Qualityvend unless marked otherwise.
     company               str    customer legal name       (required)
     derived_item_name     str    "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
     order_reason          str    "New Business" | "Add-On" | ...
-    order_date            date/str
+    order_date            str    "July 2, 2026" — NOT ISO
     platform              str
     migration_required    str
     site_contact_name     str
@@ -24,14 +24,18 @@ Qualityvend unless marked otherwise.
     installer_company     str    SHIP-TO, not necessarily the installer (§8.1)
     installer_contact     str
     installer_email       str
-    ship_to_type          str    "installer" | "customer" | "nothing" | "multiple"
+    ship_to_type          str    installer | third_party | customer |
+                                 nothing_to_ship | multiple | unknown
     install_required      str    "Yes" | "No" | "Customer self-install"
     acv                   float|None
     acv_note              str
     dealer_commission     num
     install_value         num
-    line_items            list   [{product, qty, ...}]
-    multi_site            list   [{contact, phone, email, address, notes, ...}]
+    lines                 list   [{qty:int, product:str}]  — note: `lines`
+    multi_site            list   [{company, contact, phone, phone_e164, email,
+                                   address, notes, qty}]
+    total_contract_value  float
+    contract_term_months  int
     vehicles              list   always empty in practice (§8.2)
     _warnings             list[str]
 
@@ -115,7 +119,12 @@ def v_date(value):
     if isinstance(value, date):
         return {"date": value.isoformat()}
     text = str(value).strip()
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y", "%d %b %Y", "%d %B %Y", "%m/%d/%Y"):
+    # "%B %d, %Y" first: that is what the eOrder actually contains
+    # ("July 2, 2026"). Everything after it is defensive — if TN changes the
+    # template's date formatting, this keeps working rather than silently
+    # leaving ORDER PLACED empty, which is how this was found.
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y",
+                "%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y", "%m/%d/%Y"):
         try:
             return {"date": datetime.strptime(text, fmt).date().isoformat()}
         except ValueError:
@@ -140,7 +149,7 @@ def units_total(parsed):
     Excludes the non-hardware lines the ACV term calculation also excludes —
     a commissions line is not a unit anybody installs.
     """
-    lines = _get(parsed, "line_items", "lines", default=[]) or []
+    lines = _get(parsed, "lines", "line_items", default=[]) or []
     total = 0
     for line in lines:
         if not isinstance(line, dict):
@@ -203,7 +212,11 @@ def validate(parsed, installer_match=None):
             f"ship-to is Multiple Addresses — {len(sites)} site(s) split to subitems"
         )
 
-    if _is_blank(_get(parsed, "installer_company")) and ship_to not in ("nothing", "multiple"):
+    # classify_ship_to() returns one of: installer, third_party, customer,
+    # nothing_to_ship, multiple, unknown. "unknown" means the ship-to cell was
+    # empty, which is the case the brief wants flagged — with nothing there we
+    # cannot tell whether an install is needed.
+    if ship_to == "unknown" or _is_blank(_get(parsed, "installer_company")):
         warnings.append("ship-to is blank — cannot tell whether an install is needed")
 
     missing_expected = [f for f in EXPECTED_FIELDS if _is_blank(parsed.get(f))]
@@ -294,7 +307,8 @@ def subitem_values(site, columns=None):
 
 
 def subitem_name(site, index):
-    label = site.get("suburb") or site.get("city") or site.get("address") or f"Site {index}"
+    label = (site.get("company") or site.get("address")
+             or site.get("contact") or f"Site {index}")
     qty = site.get("qty")
     return f"{label} — {qty} units" if qty else str(label)
 
@@ -399,13 +413,24 @@ def update_body(parsed, status, warnings, field_count, changes=None):
 
 
 def _summarise_lines(parsed):
-    lines = _get(parsed, "line_items", "lines", default=[]) or []
+    """"18 × RE400, 22 × VT202, 4 × AT551" for the monday Update.
+
+    Taken from derived_item_name, which the parser has already built using its
+    own product-code extraction. Re-deriving it here from the raw line text
+    would produce "18 × RE 400 with TN360" and drift from the item name on the
+    very same row.
+    """
+    name = _get(parsed, "derived_item_name")
+    if name and "=" in name:
+        return name.split("=", 1)[1].strip().replace(" x ", " × ")
+
+    lines = _get(parsed, "lines", "line_items", default=[]) or []
     parts = []
     for line in lines:
         if not isinstance(line, dict):
             continue
         qty = line.get("qty", line.get("quantity"))
-        code = line.get("code") or line.get("product") or line.get("name")
-        if qty and code:
-            parts.append(f"{int(float(qty))} × {code}")
+        product = line.get("product") or line.get("name")
+        if qty and product:
+            parts.append(f"{int(float(qty))} × {product}")
     return " · ".join(parts[:6])

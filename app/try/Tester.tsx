@@ -19,12 +19,36 @@ export default function Tester() {
         method: "POST",
         body: await file.arrayBuffer(),
       });
-      const data = await response.json();
-      setOut({ text: JSON.stringify(data, null, 2), ok: response.ok });
+      const body = await response.text();
+
+      // An HTML body means the request never reached the Python function —
+      // it was answered by Next's 404 page or by Vercel's error page. Saying
+      // "not valid JSON" there is true but useless, so diagnose instead.
+      if (body.trimStart().startsWith("<")) {
+        const health = await fetch("/api/py/health")
+          .then((r) => (r.ok ? "responding" : `returned HTTP ${r.status}`))
+          .catch(() => "unreachable");
+        setOut({
+          ok: false,
+          text:
+            `The parser returned a web page instead of data (HTTP ${response.status}).\n\n` +
+            `The Python function is ${health}.\n\n` +
+            (health === "responding"
+              ? "So routing works but this request failed. Check the Logs tab in " +
+                "Vercel for this deployment — the traceback will be there."
+              : "So the Python function itself isn't running. Usual causes: " +
+                "requirements.txt missing from the repository root, or api/_lib " +
+                "not uploaded. Check both are in GitHub, then redeploy.") +
+            `\n\n--- what came back ---\n${body.slice(0, 600)}`,
+        });
+        return;
+      }
+
+      setOut({ text: JSON.stringify(JSON.parse(body), null, 2), ok: response.ok });
     } catch (error) {
       setOut({
-        text: error instanceof Error ? error.message : "Could not read the file",
         ok: false,
+        text: error instanceof Error ? error.message : "Could not read the file",
       });
     }
   }
