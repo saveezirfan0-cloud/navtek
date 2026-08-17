@@ -65,6 +65,7 @@ def health():
         "ok": not config.missing_secrets() and not config.CONFIG_WARNINGS,
         "missing_secrets": config.missing_secrets(),
         "config_warnings": config.CONFIG_WARNINGS,
+        "database": Store().ping(),
         "unmapped_columns": columns_mod.unmapped(cols),
         "column_ids": cols,
         "column_ids_from": source,
@@ -287,9 +288,15 @@ def setup_webhook(body: dict = Body(default={}), x_setup_key: str = Header(defau
 def recent(limit: int = Query(default=20)):
     """Recent eOrder reads, for the dashboard. No secrets in the response."""
     store = Store()
-    if not store.enabled:
-        return {"enabled": False, "ingests": []}
-    rows = store.recent_ingests(min(limit, 50))
+    probe = store.ping()
+    if not probe["ok"]:
+        return {"enabled": False, "ingests": [], "database": probe}
+    try:
+        rows = store.recent_ingests(min(limit, 50))
+    except Exception as exc:  # noqa: BLE001
+        return {"enabled": False, "ingests": [],
+                "database": {"ok": False, "state": "error",
+                             "detail": f"{type(exc).__name__}: {exc}"}}
     return {
         "enabled": True,
         "ingests": [

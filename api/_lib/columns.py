@@ -61,6 +61,12 @@ TYPE_EQUIVALENTS = {
     "email": {"email"},
 }
 
+def _warn(message):
+    """Record once. These surface on /health and the Orders page."""
+    if message not in config.CONFIG_WARNINGS:
+        config.CONFIG_WARNINGS.append(message)
+
+
 _CACHE_TTL = 300
 _cache = {"at": 0.0, "board": None, "columns": None}
 
@@ -95,6 +101,27 @@ def resolved(monday, board_id=None, force=False):
         # monday unreachable: fall back to whatever the environment gave us
         # rather than failing the whole request.
         return {**config.COLUMNS, **columns}
+
+    live_ids = {column["id"] for column in live}
+
+    # Drop any COLUMN_IDS override that doesn't exist on this board.
+    #
+    # Column IDs belong to a board. Point ORDERS_BOARD_ID at a different board
+    # — say, moving from a test copy to the real one — and every pinned ID
+    # becomes wrong, but stays set. Without this the app would keep writing to
+    # IDs monday has never heard of on the new board, and the errors would name
+    # the column, not the cause. Falling back to lookup-by-title recovers
+    # automatically and says so.
+    stale = [key for key, value in columns.items() if value not in live_ids]
+    if stale:
+        for key in stale:
+            columns.pop(key)
+        _warn(
+            f"COLUMN_IDS has {len(stale)} ID(s) that are not on board "
+            f"{board_id} ({', '.join(sorted(stale))}). They are being ignored "
+            f"and read from the board instead — this is what you would expect "
+            f"after changing ORDERS_BOARD_ID. Clear COLUMN_IDS to silence it."
+        )
 
     by_title = {}
     for column in live:

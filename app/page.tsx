@@ -91,8 +91,20 @@ export default async function Dashboard() {
           <h2>Recent reads</h2>
           {!recent.enabled ? (
             <p className="empty">
-              The database isn&rsquo;t connected, so nothing is being recorded.
-              Check <code>SUPABASE_URL</code> and <code>SUPABASE_SERVICE_KEY</code>.
+              <b>Nothing is being recorded.</b>{" "}
+              {recent.database?.detail ??
+                "The database isn't connected."}{" "}
+              {recent.database?.state === "not_configured" && (
+                <>
+                  Set <code>SUPABASE_URL</code> and{" "}
+                  <code>SUPABASE_SERVICE_KEY</code> in Vercel, then redeploy.
+                </>
+              )}
+              <br />
+              <span style={{ fontSize: 13.5 }}>
+                This does not stop eOrders being read — monday is still written
+                to. What is lost is the duplicate check and this history.
+              </span>
             </p>
           ) : rows.length === 0 ? (
             <p className="empty">

@@ -121,11 +121,27 @@ export async function getHealth(): Promise<Health | null> {
   }
 }
 
-export async function getRecent(): Promise<{ enabled: boolean; ingests: Ingest[] }> {
+export type DbState = { ok: boolean; state: string; detail?: string };
+
+export async function getRecent(): Promise<{
+  enabled: boolean;
+  ingests: Ingest[];
+  database?: DbState;
+}> {
   try {
     return await call("/recent");
-  } catch {
-    return { enabled: false, ingests: [] };
+  } catch (error) {
+    // The request itself failed — say so, rather than reporting it as an
+    // unconfigured database, which sends people to check the wrong thing.
+    return {
+      enabled: false,
+      ingests: [],
+      database: {
+        ok: false,
+        state: "unreachable",
+        detail: error instanceof Error ? error.message : "unknown error",
+      },
+    };
   }
 }
 

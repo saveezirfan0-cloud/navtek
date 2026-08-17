@@ -57,6 +57,39 @@ class Store:
         response.raise_for_status()
         return response.json() if response.content else []
 
+    def ping(self):
+        """Is the database actually reachable and are the tables there?
+
+        Distinguishes three states the dashboard would otherwise collapse into
+        one unhelpful "not connected": no credentials, credentials that don't
+        work, and credentials that work against a database with no schema.
+        """
+        if not self.enabled:
+            return {"ok": False, "state": "not_configured",
+                    "detail": "SUPABASE_URL or SUPABASE_SERVICE_KEY is not set"}
+        try:
+            response = self._client.get(
+                f"{self.url}/rest/v1/eorder_ingests",
+                params={"select": "id", "limit": "1"},
+                headers=self._headers(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "state": "unreachable", "detail": f"{type(exc).__name__}: {exc}"}
+
+        if response.status_code in (401, 403):
+            return {"ok": False, "state": "rejected", "detail":
+                    "Supabase rejected the key. This must be the SECRET key "
+                    "(sb_secret_… or legacy service_role), not the publishable "
+                    "or anon key — only the secret key can read these tables."}
+        if response.status_code == 404:
+            return {"ok": False, "state": "no_tables", "detail":
+                    "Connected, but the eorder_ingests table does not exist. "
+                    "Run supabase/migrations/0001_init.sql in the SQL Editor."}
+        if response.status_code >= 400:
+            return {"ok": False, "state": "error",
+                    "detail": f"HTTP {response.status_code}: {response.text[:200]}"}
+        return {"ok": True, "state": "ready"}
+
     # -- idempotency -------------------------------------------------------
 
     def already_ingested(self, opportunity_id, file_sha):
