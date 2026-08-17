@@ -138,13 +138,22 @@ def handle_webhook(payload, monday=None, store=None):
         )
 
     # --- installer suggestion (§6.2) -----------------------------------
+    #
+    # Only attempted once there are accounts to match against. With an empty
+    # Installer Accounts board every real ship-to would come back "unmatched"
+    # and flag Check, so an order automation running on its own would report a
+    # problem on every order that ships to an installer. No accounts means the
+    # allocation half simply isn't in use yet, which is not a fault.
     accounts = store.installer_accounts() if store.enabled else []
-    installer_match = installers.match(
-        parsed.get("installer_company"), accounts, customer_name=parsed.get("company")
-    )
-    installer_ids = (
-        [installer_match["account"]["monday_item_id"]] if installer_match["account"] else None
-    )
+    installer_match = None
+    installer_ids = None
+    if accounts:
+        installer_match = installers.match(
+            parsed.get("installer_company"), accounts,
+            customer_name=parsed.get("company"),
+        )
+        if installer_match["account"]:
+            installer_ids = [installer_match["account"]["monday_item_id"]]
 
     status, warnings = mapping.validate(parsed, installer_match)
 

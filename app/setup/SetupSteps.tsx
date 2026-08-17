@@ -58,15 +58,15 @@ export default function SetupSteps() {
     children,
     step,
     label,
-    body,
+    ghost,
     warn,
   }: {
-    n: number;
+    n: string;
     title: string;
     children: React.ReactNode;
     step: StepKey;
     label: string;
-    body?: Record<string, unknown>;
+    ghost?: boolean;
     warn?: string;
   }) => (
     <div className="panel">
@@ -77,9 +77,9 @@ export default function SetupSteps() {
       <p>{children}</p>
       {warn && <div className="warnbox">{warn}</div>}
       <button
-        className={n === 2 ? "act ghost" : "act"}
+        className={ghost ? "act ghost" : "act"}
         disabled={results[step] === "running"}
-        onClick={() => go(step, body)}
+        onClick={() => go(step)}
       >
         {label}
       </button>
@@ -89,40 +89,38 @@ export default function SetupSteps() {
 
   return (
     <>
-      <Step n={1} step="plan" title="Preview the board changes" label="Preview">
+      {/* ---------------- The order automation ---------------- */}
+      <div className="head" style={{ paddingTop: 8 }}>
+        <h2 style={{ fontSize: 20, margin: 0 }}>The order automation</h2>
+        <p>
+          These five get eOrders reading into monday. Nothing here depends on
+          the installer portal.
+        </p>
+      </div>
+
+      <Step n="1" step="plan" title="Preview the board changes" label="Preview" ghost>
         Lists the columns that would be added to TN Orders. Nothing is created.
-        Read this before step 2. Anything already there shows as{" "}
-        <code>exists</code>.
+        Anything already there shows as <code>exists</code>.
       </Step>
 
       <Step
-        n={2}
+        n="2"
         step="columns"
         title="Create the columns"
         label="Create columns"
         warn="This changes the live TN Orders board. Existing columns are left alone; only missing ones are added."
       >
-        Adds the fifteen columns the automation writes to, and shows the ID of
-        each.
-      </Step>
-
-      <Step n={3} step="installers" title="Set up the Installer Accounts board" label="Set up board">
-        Uses your existing Installer Accounts board if there is one — set{" "}
-        <code>INSTALLERS_BOARD_ID</code> in Vercel to name it explicitly —
-        otherwise creates one. Either way it adds only the columns that are
-        missing and issues a portal token to any account without one. Accounts
-        are seeded only onto a genuinely empty board. Then it adds the{" "}
-        <b>Installer</b> connect column to TN Orders and links the two boards.
+        Adds the columns the automation writes to, and shows the ID of each.
       </Step>
 
       <div className="panel">
         <h2 className="step">
-          <span className="step-n">4</span>Copy the environment variables
+          <span className="step-n">3</span>Copy the environment variables
         </h2>
         <p>
           Paste these into Vercel under <b>Settings → Environment Variables</b>,
           then <b>Deployments → ⋯ → Redeploy</b>. The app reads them once at
-          start-up, so nothing below works until it restarts.
+          start-up, so step 4 won&rsquo;t work until it restarts.
         </p>
         <button
           className="act ghost"
@@ -134,15 +132,9 @@ export default function SetupSteps() {
         <Output result={results.env ?? null} />
       </div>
 
-      <Step n={5} step="sync" title="Copy the installers into the database" label="Sync installers">
-        The portal looks a magic link up in the database, so an account added in
-        monday stays invisible until this runs. Run it again whenever you add,
-        deactivate or reissue an account.
-      </Step>
-
       <div className="panel">
         <h2 className="step">
-          <span className="step-n">6</span>Switch the automation on
+          <span className="step-n">4</span>Switch the automation on
         </h2>
         <p>
           Registers the monday webhook against the <b>eOrder column only</b>, so
@@ -168,14 +160,50 @@ export default function SetupSteps() {
 
       <div className="panel">
         <h2 className="step">
-          <span className="step-n">7</span>Test it
+          <span className="step-n">5</span>Test it
         </h2>
         <p>
-          Open the <a href="/try">file tester</a> and drop an eOrder in to see
-          what the parser reads. It writes nothing — not to monday, not to the
-          database.
+          Drop an eOrder into the <a href="/try">file tester</a> to check the
+          parser reads it — that writes nothing anywhere. Then drop the same
+          file onto the eOrder column of a row in TN Orders and watch the row
+          fill in.
         </p>
       </div>
+
+      {/* ---------------- The installer portal ---------------- */}
+      <div className="head" style={{ paddingTop: 26 }}>
+        <h2 style={{ fontSize: 20, margin: 0 }}>The installer portal — later</h2>
+        <p>
+          Not needed for the order automation. Leave these until the orders side
+          is running properly. Until then the Installer column stays empty and
+          no order is flagged because of it.
+        </p>
+      </div>
+
+      <Step
+        n="A"
+        step="installers"
+        title="Set up the Installer Accounts board"
+        label="Set up board"
+        ghost
+      >
+        Uses your existing board if <code>INSTALLERS_BOARD_ID</code> is set in
+        Vercel — otherwise creates one. Either way it adds only the columns that
+        are missing and issues a portal token to any account without one.
+        Accounts are seeded only onto a genuinely empty board.
+      </Step>
+
+      <Step
+        n="B"
+        step="sync"
+        title="Copy the installers into the database"
+        label="Sync installers"
+        ghost
+      >
+        The portal looks a magic link up in the database, so an account added in
+        monday stays invisible until this runs. Run it again whenever you add,
+        deactivate or reissue an account.
+      </Step>
     </>
   );
 }

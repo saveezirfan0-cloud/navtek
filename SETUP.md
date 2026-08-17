@@ -123,9 +123,11 @@ The pack ships a placeholder where the real eOrder parser goes. Swap it in now.
 GitHub replaces the placeholder. Click the file to confirm it now begins
 `"""Navtek eOrder parser — reference implementation`.
 
-> **Don't have it yet?** Carry on. Everything else sets up and the health check
-> passes — only actual eOrder reading fails, with a message telling you the
-> parser is missing. Come back to this later.
+> **Don't have it yet?** Carry on — everything else sets up and the health
+> check passes. But nothing will actually read an eOrder until this file is in
+> place: the file tester and the monday automation will both return
+> *"api/_lib/eorder_parser.py is a placeholder"*. This is the one step the
+> order flow cannot work without.
 
 ---
 
@@ -254,43 +256,26 @@ The long `unmapped_columns` list is expected. Part 6 fixes it.
 
 ---
 
-# Part 6 — Set up the monday board
+# Part 6 — Switch the order automation on
 
-Click **Setup** in the top navigation. Seven numbered steps, a button on each.
-Work down in order. Every button is safe to press twice.
+Click **Setup** in the top navigation. The page is in two halves. The first
+five steps are the order automation — that is all you need for eOrders to start
+reading into monday. The installer portal steps below them can wait.
 
-**1 — Preview the board changes.** Lists the fifteen columns it would add to TN
-Orders. Read it. Anything already there shows as `exists` and is left alone.
+Every button is safe to press twice.
+
+**1 — Preview the board changes.** Lists the columns it would add to TN Orders.
+Read it. Anything already there shows as `exists` and is left alone.
 
 **2 — Create the columns.** *This changes the live TN Orders board.* It adds
 the missing columns and shows the ID of each. Nothing existing is renamed,
 moved or deleted.
 
-**3 — Set up the Installer Accounts board.**
-
-*Already have an installer board?* Add `INSTALLERS_BOARD_ID` to your Vercel
-environment variables with that board's ID before pressing this, and redeploy.
-The board ID is the long number in the board's URL:
-`monday.com/boards/18426336129` → `18426336129`. Without it, this step looks
-for a board called exactly "Installer Accounts" and creates one if it can't
-find it — which on an account that already has a differently-named board means
-two boards to reconcile.
-
-With that set, this step **adopts** the board rather than replacing it: it adds
-only the columns that are missing, and issues a portal token to any account
-that doesn't have one. Existing accounts and their tokens are untouched. It
-seeds the eight known names only onto a genuinely empty board.
-
-It also adds the **Installer** connect column to TN Orders and links the two
-boards. The old free-text `installer` column is deliberately left where it is,
-as history — nothing reads it any more.
-
-**4 — Copy the environment variables.** Press **Show variables**, then
-**Copy**. You get two lines:
+**3 — Copy the environment variables.** Press **Show variables**, then
+**Copy**. You get a line like:
 
 ```
 COLUMN_IDS={"opportunity_id":"order__","eorder_file":"file_mkq1234",…}
-INSTALLERS_BOARD_ID=1234567890
 ```
 
 Back in Vercel:
@@ -298,31 +283,53 @@ Back in Vercel:
 1. **Settings → Environment Variables**
 2. Add `COLUMN_IDS` — everything after the `=`, curly brackets included, all on
    one line
-3. Add `INSTALLERS_BOARD_ID` — just the number
-4. **Deployments →** the top one **→ ⋯ → Redeploy**
+3. **Deployments →** the top one **→ ⋯ → Redeploy**
 
-**That redeploy is not optional.** The app reads these once at start-up, so
-nothing below works until it restarts.
+**That redeploy is not optional.** The app reads this once at start-up.
 
-**5 — Copy the installers into the database.** Reload the Setup page first so
-it picks up the new variables, then press this. You'll see `{"synced": 8}`.
-
-Run it again any time you add an installer, deactivate one, or change a token.
-Until you do, the portal doesn't know they exist.
-
-**6 — Switch the automation on.** Paste your app address into the box — just
+**4 — Switch the automation on.** Paste your app address into the box — just
 the address, no `/setup` on the end — and press **Register webhook**.
 
-This is the moment it goes live. It's registered against the **eOrder column
+This is the moment it goes live. It registers against the **eOrder column
 only**, so the existing DocuSign `files` column carries on being ignored, and
 pressing it twice reuses the existing webhook rather than registering a second
 one that would process every file twice.
 
-**7 — Test it.** Link through to the file tester.
+**5 — Test it.** See Part 8.
 
 ---
 
-# Part 7 — Give installers their links
+## The installer portal (leave this until later)
+
+Two more steps sit under a separate heading on the setup page. They are for the
+installer portal and nothing in the order automation depends on them. Until you
+run them the **Installer** column stays empty, and no order is flagged because
+of it.
+
+**A — Set up the Installer Accounts board.**
+
+*Already have an installer board?* Add `INSTALLERS_BOARD_ID` to your Vercel
+environment variables with that board's ID first, and redeploy. The ID is the
+long number in the board's URL: `monday.com/boards/18426336129` →
+`18426336129`. Without it, this step looks for a board called exactly
+"Installer Accounts" and creates one if it can't find it — which on an account
+that already has a differently-named board means two boards to reconcile.
+
+With that set, it **adopts** the board rather than replacing it: adds only the
+missing columns, and issues a portal token to any account that doesn't have
+one. Existing accounts and tokens are untouched. It seeds the eight known names
+only onto a genuinely empty board.
+
+It also adds the **Installer** connect column to TN Orders and links the two
+boards. The old free-text `installer` column is left where it is, as history.
+
+**B — Copy the installers into the database.** The portal looks a magic link up
+in the database, so an account added in monday stays invisible until this runs.
+Run it again whenever you add, deactivate or reissue an account.
+
+---
+
+# Part 7 — Give installers their links *(portal only)*
 
 Click **Installers** in the top navigation. Every account is listed with an
 **Open** button that opens their portal exactly as they'd see it.

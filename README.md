@@ -1,11 +1,15 @@
 # Navtek eOrder
 
-One web app doing two jobs:
+One web app doing two jobs. They are independent — the first runs on its own,
+and is the one that matters now.
 
 - **The order flow.** Drop a Teletrac Navman eOrder onto a row in **TN Orders
-  2026/2025/2024** (`5834171978`) and the row fills itself in.
+  2026/2025/2024** (`5834171978`) and the row fills itself in. Needs: the
+  parser, the board columns, the webhook. Nothing else.
 - **The installer portal.** A magic link per installer account showing their
   jobs, taking contacted / booked / progress / complete back to the board.
+  Later. With no Installer Accounts board configured, the order flow skips
+  allocation entirely rather than flagging every order as unmatched.
 
 Built to the Aug 2026 build brief. Section references below point at it.
 
