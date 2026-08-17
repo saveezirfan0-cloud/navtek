@@ -266,14 +266,24 @@ Orders. Read it. Anything already there shows as `exists` and is left alone.
 the missing columns and shows the ID of each. Nothing existing is renamed,
 moved or deleted.
 
-**3 — Create the Installer Accounts board.** Creates the board, adds its
-columns, and seeds the eight known accounts — Dan Wells, Paul Redmond / FFT
-Technology, Rob Salerno, David Unger, Ahmed, GPS Tech, Quality Installs, TN —
-each with a portal token generated on the spot. It also adds the **Installer**
-connect column to TN Orders and links the two boards.
+**3 — Set up the Installer Accounts board.**
 
-The old free-text `installer` column is deliberately left where it is, as
-history. Nothing reads it any more.
+*Already have an installer board?* Add `INSTALLERS_BOARD_ID` to your Vercel
+environment variables with that board's ID before pressing this, and redeploy.
+The board ID is the long number in the board's URL:
+`monday.com/boards/18426336129` → `18426336129`. Without it, this step looks
+for a board called exactly "Installer Accounts" and creates one if it can't
+find it — which on an account that already has a differently-named board means
+two boards to reconcile.
+
+With that set, this step **adopts** the board rather than replacing it: it adds
+only the columns that are missing, and issues a portal token to any account
+that doesn't have one. Existing accounts and their tokens are untouched. It
+seeds the eight known names only onto a genuinely empty board.
+
+It also adds the **Installer** connect column to TN Orders and links the two
+boards. The old free-text `installer` column is deliberately left where it is,
+as history — nothing reads it any more.
 
 **4 — Copy the environment variables.** Press **Show variables**, then
 **Copy**. You get two lines:
@@ -304,7 +314,9 @@ Until you do, the portal doesn't know they exist.
 the address, no `/setup` on the end — and press **Register webhook**.
 
 This is the moment it goes live. It's registered against the **eOrder column
-only**, so the existing DocuSign `files` column carries on being ignored.
+only**, so the existing DocuSign `files` column carries on being ignored, and
+pressing it twice reuses the existing webhook rather than registering a second
+one that would process every file twice.
 
 **7 — Test it.** Link through to the file tester.
 
@@ -389,6 +401,8 @@ long it took.
 | Portal says "This link no longer works" | Step 5 hasn't been run since that account was added, or the token changed. |
 | Portal loads but shows no jobs | Nothing is allocated to that account. Set the **Installer** column on a row in TN Orders. |
 | `NotImplementedError` about the parser | Part 2. |
+| A second Installer Accounts board appeared | `INSTALLERS_BOARD_ID` wasn't set before step 3. Set it, redeploy, delete the empty duplicate, run step 3 again. |
+| Step 6: no file column called 'eOrder' | Step 2 hasn't run, or the column was renamed. It must be a **File** column titled exactly `eOrder`. |
 | Build fails mentioning `app/api` | Someone added a route handler under `app/api`. This project can't use those — see the note in `next.config.mjs`. |
 
 **Where to look:** Vercel → your project → **Logs**. Every request is there

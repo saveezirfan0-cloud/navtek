@@ -26,10 +26,25 @@ from fastapi.responses import JSONResponse  # noqa: E402
 
 from _lib import bootstrap, config, portal  # noqa: E402
 from _lib.ingest import handle_webhook  # noqa: E402
-from _lib.monday import Monday  # noqa: E402
+from _lib.monday import Monday, MondayError  # noqa: E402
 from _lib.store import Store  # noqa: E402
 
 app = FastAPI(title="Navtek eOrder service", docs_url=None, redoc_url=None)
+
+
+# A bare "HTTP 500" on the setup page tells whoever is running it nothing at
+# all. These put the actual cause in the response body, which is the only place
+# they can see it without opening Vercel's logs.
+@app.exception_handler(MondayError)
+async def _monday_error(request, exc):
+    return JSONResponse({"detail": f"monday API: {exc}"}, status_code=502)
+
+
+@app.exception_handler(Exception)
+async def _any_error(request, exc):
+    return JSONResponse(
+        {"detail": f"{type(exc).__name__}: {exc}"}, status_code=500
+    )
 
 
 @app.get("/api/py/health")
@@ -186,7 +201,7 @@ def setup_columns(x_setup_key: str = Header(default="")):
 def setup_installers(x_setup_key: str = Header(default="")):
     _setup_guard(x_setup_key)
     monday = Monday()
-    result = bootstrap.create_installer_board(monday)
+    result = bootstrap.ensure_installer_board(monday)
     link = bootstrap.create_installer_link(monday, result["board_id"])
     result.setdefault("log", []).append(
         f"{'created' if link['created'] else 'exists'}  Installer connect column "

@@ -114,48 +114,114 @@ def create_installer_link(monday, installers_board_id, orders_board_id=None):
 
 
 def find_installer_board(monday, name="Installer Accounts"):
-    data = monday.gql(
-        "query ($n: String!) { boards (limit: 200) { id name } }", {"n": name}
-    )
+    """Locate the Installer Accounts board by name.
+
+    INSTALLERS_BOARD_ID wins over this — an existing board that happens to be
+    called something else is still the right board, and guessing by name would
+    create a duplicate alongside it.
+    """
+    if config.INSTALLERS_BOARD_ID:
+        return config.INSTALLERS_BOARD_ID
+    data = monday.gql("query { boards (limit: 500) { id name } }")
     for board in data.get("boards") or []:
         if board["name"].strip().lower() == name.lower():
             return board["id"]
     return None
 
 
-def create_installer_board(monday):
-    """Create and seed Installer Accounts. Idempotent on the board name."""
-    existing = find_installer_board(monday)
-    if existing:
-        return {"board_id": existing, "created": False, "log": ["board already exists"]}
+def ensure_installer_board(monday):
+    """Adopt an existing Installer Accounts board, or create one.
 
-    data = monday.gql(
-        "mutation ($n: String!) { create_board (board_name: $n, board_kind: private) { id } }",
-        {"n": "Installer Accounts"},
-    )
-    board_id = data["create_board"]["id"]
-    log = [f"created board {board_id}"]
+    Most accounts already track installers somewhere. Rather than making a
+    second board alongside it, this takes whatever board INSTALLERS_BOARD_ID
+    points at (or finds one by name), adds only the columns that are missing,
+    and issues a portal token to any account that doesn't have one.
 
+    Seeding only happens on a genuinely empty board. On a board that already
+    has rows, the existing names are the truth and SEED_ACCOUNTS would just be
+    eight duplicates to clean up.
+    """
+    board_id = find_installer_board(monday)
+    log = []
+    created_board = False
+
+    if board_id:
+        log.append(f"using existing board {board_id}")
+    else:
+        data = monday.gql(
+            "mutation ($n: String!) { create_board (board_name: $n, board_kind: private) { id } }",
+            {"n": "Installer Accounts"},
+        )
+        board_id = data["create_board"]["id"]
+        created_board = True
+        log.append(f"created board {board_id}")
+
+    # --- columns: add only what's missing ---
+    existing = {c["title"].strip().lower(): c for c in monday.board_columns(board_id)}
     columns = {}
     for key, title, ctype, defaults in INSTALLER_COLUMNS:
+        found = existing.get(title.lower())
+        if found:
+            columns[key] = found["id"]
+            log.append(f"exists   {title} ({found['id']})")
+            continue
         created = monday.create_column(board_id, title, ctype, defaults)
         columns[key] = created["id"]
         log.append(f"created  {title} ({created['id']})")
 
-    groups = monday.board_groups(board_id)
+    # --- accounts ---
+    data = monday.gql(
+        """
+        query ($b: [ID!]) {
+          boards (ids: $b) {
+            groups { id }
+            items_page (limit: 500) { items { id name column_values { id text } } }
+          }
+        }
+        """,
+        {"b": [str(board_id)]},
+    )
+    board = (data.get("boards") or [{}])[0]
+    items = (board.get("items_page") or {}).get("items") or []
+    groups = board.get("groups") or []
     group_id = groups[0]["id"] if groups else "topics"
 
-    for name, account_type in SEED_ACCOUNTS:
-        monday.create_item(board_id, group_id, name, {
-            columns["account_type"]: {"label": account_type},
-            # This token is the entirety of the portal's authentication, so it
-            # comes from urandom and is never derived from a name or an id.
-            columns["portal_token"]: secrets.token_urlsafe(32),
-            columns["active"]: {"checked": "true"},
-        })
-        log.append(f"seeded   {name}")
+    token_column = columns["portal_token"]
 
-    return {"board_id": board_id, "created": True, "log": log, "columns": columns}
+    if not items:
+        for name, account_type in SEED_ACCOUNTS:
+            monday.create_item(board_id, group_id, name, {
+                columns["account_type"]: {"label": account_type},
+                token_column: secrets.token_urlsafe(32),
+                columns["active"]: {"checked": "true"},
+            })
+            log.append(f"seeded   {name}")
+    else:
+        issued = 0
+        for item in items:
+            values = {c["id"]: c.get("text") for c in item["column_values"]}
+            if (values.get(token_column) or "").strip():
+                continue
+            monday.set_columns(
+                board_id, item["id"], {token_column: secrets.token_urlsafe(32)}
+            )
+            issued += 1
+            log.append(f"token    {item['name']}")
+        log.append(
+            f"{len(items)} existing account(s), {issued} issued a portal token"
+        )
+
+    return {
+        "board_id": board_id,
+        "created": created_board,
+        "log": log,
+        "columns": columns,
+        "accounts": len(items) or len(SEED_ACCOUNTS),
+    }
+
+
+# Kept for the CLI script and anyone following the old name.
+create_installer_board = ensure_installer_board
 
 
 def sync_installers(monday, store, installers_board_id=None):
@@ -221,11 +287,39 @@ def sync_installers(monday, store, installers_board_id=None):
     return {"synced": len(rows), "skipped_no_token": skipped}
 
 
+def eorder_column_id(monday, board_id=None):
+    """The eOrder file column, from config or looked up live.
+
+    Looked up rather than required, so the webhook can be registered before
+    COLUMN_IDS has been pasted into the environment — otherwise step 6 depends
+    on a redeploy that hasn't happened yet.
+    """
+    if config.COLUMNS.get("eorder_file"):
+        return config.COLUMNS["eorder_file"]
+    for column in monday.board_columns(board_id or config.ORDERS_BOARD_ID):
+        if column["type"] == "file" and column["title"].strip().lower() == "eorder":
+            return column["id"]
+    return None
+
+
 def register_webhook(monday, url, board_id=None, file_column_id=None):
     board_id = board_id or config.ORDERS_BOARD_ID
-    column_id = file_column_id or config.COLUMNS.get("eorder_file")
+    column_id = file_column_id or eorder_column_id(monday, board_id)
     if not column_id:
-        raise ValueError("the eOrder file column id is not configured yet")
+        raise ValueError(
+            "No file column called 'eOrder' on the board. Run step 2 first."
+        )
+
+    # Registering twice would process every dropped file twice.
+    for hook in monday.webhooks(board_id):
+        if hook.get("config") and column_id in str(hook["config"]):
+            return {
+                "webhook_id": hook["id"],
+                "url": url,
+                "column_id": column_id,
+                "already_registered": True,
+            }
+
     hook = monday.create_webhook(
         board_id, url, "change_specific_column_value", {"columnId": column_id}
     )

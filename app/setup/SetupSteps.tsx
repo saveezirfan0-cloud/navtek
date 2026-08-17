@@ -106,11 +106,13 @@ export default function SetupSteps() {
         each.
       </Step>
 
-      <Step n={3} step="installers" title="Create the Installer Accounts board" label="Create board">
-        Creates the board, its columns, and the eight known accounts — each with
-        a portal token generated on the spot. Then adds the{" "}
+      <Step n={3} step="installers" title="Set up the Installer Accounts board" label="Set up board">
+        Uses your existing Installer Accounts board if there is one — set{" "}
+        <code>INSTALLERS_BOARD_ID</code> in Vercel to name it explicitly —
+        otherwise creates one. Either way it adds only the columns that are
+        missing and issues a portal token to any account without one. Accounts
+        are seeded only onto a genuinely empty board. Then it adds the{" "}
         <b>Installer</b> connect column to TN Orders and links the two boards.
-        The old free-text installer column is left alone as history.
       </Step>
 
       <div className="panel">
@@ -145,7 +147,8 @@ export default function SetupSteps() {
         <p>
           Registers the monday webhook against the <b>eOrder column only</b>, so
           dropping a DocuSign file on the existing files column still does
-          nothing. Paste this app&rsquo;s own address below.
+          nothing. Running it twice is safe — an existing webhook is reused
+          rather than doubled. Paste this app&rsquo;s own address below.
         </p>
         <input
           className="field"

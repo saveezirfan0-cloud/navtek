@@ -255,6 +255,14 @@ class Monday:
         )
         return data["create_column"]
 
+    def webhooks(self, board_id):
+        """Existing webhooks on a board, so we never register a duplicate."""
+        data = self.gql(
+            "query ($b: ID!) { webhooks (board_id: $b) { id event config } }",
+            {"b": str(board_id)},
+        )
+        return data.get("webhooks") or []
+
     def create_webhook(self, board_id, url, event, config_json=None):
         variables = {"b": str(board_id), "u": url, "e": event}
         config_arg = ""
