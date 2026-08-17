@@ -1,0 +1,71 @@
+{
+  "_note": [
+    "Acceptance gate for extraction. Each entry asserts a subset of parser",
+    "output — the fields the brief validates by hand, plus the ones whose",
+    "failure would be silent.",
+    "",
+    "Provenance: ACV, order reason and ship-to values come from the validated",
+    "tables in brief §4.1 and §8. Item names and opportunity IDs were taken",
+    "from a run of the reference parser against these files in Aug 2026.",
+    "",
+    "Upsell is NOT covered here. The only Upsell eOrder was withheld for",
+    "confidentiality, so that ACV branch has no sample exercising it. Get one",
+    "into this set before go-live (brief §4.1)."
+  ],
+
+  "KANE_CIVIL_PTY_LTD__2_07_2026__EOrder.xlsx": {
+    "opportunity_id": "006VP00000agsnG",
+    "order_reason": "New Business",
+    "install_required": "Yes",
+    "ship_to_type": "installer",
+    "acv": 18144.0,
+    "derived_item_name": "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551",
+    "vehicles": [],
+    "_expect_multi_site_count": 0
+  },
+
+  "Qualityvend_Pty_Ltd__4_05_2026__EOrder.xlsx": {
+    "opportunity_id": "006VP00000Xshcr",
+    "company": "Qualityvend Pty Ltd",
+    "order_reason": "Add-On",
+    "installer_company": "Multiple Addresses",
+    "ship_to_type": "multiple",
+    "acv": 7740.0,
+    "vehicles": [],
+    "_expect_multi_site_count": 4
+  },
+
+  "AGB_INVESTMENT_GROUP_PTY_LTD__27_07_2026__EOrder.xlsx": {
+    "opportunity_id": "006VP00000bowJd",
+    "order_reason": "Change of Ownership",
+    "install_required": "No",
+    "ship_to_type": "nothing",
+    "acv": null,
+    "derived_item_name": "AGB INVESTMENT GROUP = 1 x VT102, 1 x TMA Basic",
+    "vehicles": [],
+    "_expect_multi_site_count": 0
+  },
+
+  "Southern_Truck_Centre__2_07_2026__EOrder.xlsx": {
+    "opportunity_id": "006VP00000aa0Kv",
+    "order_reason": "Service Only Renewal",
+    "install_required": "No",
+    "ship_to_type": "nothing",
+    "acv": null,
+    "derived_item_name": "SOUTHERN TRUCK CENTRE = 13 x VT102",
+    "vehicles": [],
+    "_expect_multi_site_count": 0
+  },
+
+  "Cosmo_Cranes_Pty_Ltd__13_05_2026__EOrder.xlsx": {
+    "order_reason": "Hardware Only (Replacement unit)",
+    "install_required": "Customer self-install",
+    "ship_to_type": "customer",
+    "acv": null,
+    "derived_item_name": "COSMO CRANES = 1 x Driver ID",
+    "site_phone_e164": "+611300126766",
+    "site_phone_display": "1300 1 COSMO",
+    "vehicles": [],
+    "_expect_multi_site_count": 0
+  }
+}

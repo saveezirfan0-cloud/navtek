@@ -1,0 +1,225 @@
+/* Ported from the approved prototype (portal-gpstech.html / portal-paul.html).
+   Deliberately unchanged — the visual language was signed off; this is a port,
+   not a redesign. Anything new below is marked. */
+
+:root {
+  --navy: #0f2740;
+  --navy-2: #1b3d5f;
+  --ink: #12181f;
+  --mid: #5b6875;
+  --line: #dfe5ec;
+  --bg: #eef1f5;
+  --card: #fff;
+  --red: #c0362c;
+  --red-bg: #fdecea;
+  --amber: #8a5a00;
+  --amber-bg: #fdf3e0;
+  --green: #1a6b45;
+  --green-bg: #e6f4ec;
+  --blue: #1e5b8f;
+  --blue-bg: #e8f1f9;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+
+body {
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.wrap { max-width: 520px; margin: 0 auto; min-height: 100vh; }
+
+header { background: var(--navy); color: #fff; padding: 16px 16px 18px; }
+.brand {
+  font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase;
+  color: #8fb0cc; font-weight: 600;
+}
+.who { font-size: 22px; font-weight: 650; margin-top: 3px; }
+.summary { margin-top: 12px; font-size: 14.5px; color: #cfe0ee; }
+.hot { color: #ffb3ab; font-weight: 650; }
+
+.sect {
+  padding: 18px 16px 6px; font-size: 12.5px; font-weight: 700;
+  letter-spacing: 1.1px; text-transform: uppercase; color: var(--mid);
+}
+
+.card {
+  background: var(--card); margin: 0 12px 10px; border-radius: 12px;
+  border: 1px solid var(--line); box-shadow: 0 1px 2px rgba(16, 32, 48, .05);
+  overflow: hidden;
+}
+summary { padding: 14px 15px; cursor: pointer; list-style: none; display: block; }
+summary::-webkit-details-marker { display: none; }
+.cust { font-size: 17.5px; font-weight: 650; line-height: 1.3; }
+.loc { font-size: 14px; color: var(--mid); margin-top: 2px; }
+.kit { font-size: 14px; margin-top: 7px; }
+.meta { font-size: 13px; color: var(--mid); margin-top: 3px; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 10px;
+  font-size: 13px; font-weight: 650; padding: 5px 10px; border-radius: 20px;
+}
+.c-red { background: var(--red-bg); color: var(--red); }
+.c-amber { background: var(--amber-bg); color: var(--amber); }
+.c-green { background: var(--green-bg); color: var(--green); }
+.c-blue { background: var(--blue-bg); color: var(--blue); }
+.c-grey { background: #eef1f4; color: var(--mid); }
+.c-part { background: #eaf0f7; color: var(--navy-2); }
+
+.more { display: block; font-size: 13px; color: var(--navy-2); font-weight: 600; margin-top: 10px; }
+details[open] .more { display: none; }
+
+.body { padding: 0 15px 15px; border-top: 1px solid #f0f3f6; }
+.facts { padding: 4px 0 14px; }
+.row { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; font-size: 15px; }
+.row + .row { border-top: 1px solid #f4f6f9; }
+.row .k { color: var(--mid); flex: 0 0 auto; }
+.row .v { text-align: right; font-weight: 600; }
+
+.btn {
+  display: block; width: 100%; border-radius: 11px; padding: 15px;
+  font-size: 16.5px; font-weight: 650; margin-bottom: 10px;
+  text-align: center; text-decoration: none;
+  border: none; font-family: inherit; cursor: pointer;
+}
+.b-call { background: var(--green); color: #fff; }
+.b-main { background: var(--navy-2); color: #fff; }
+.b-alt { background: #fff; color: var(--navy-2); border: 1.5px solid #c3d2df; }
+.b-warn { background: #fff; color: var(--red); border: 1.5px solid #eccbc7; }
+.btn:disabled { opacity: .55; cursor: default; }
+
+.done {
+  background: var(--green-bg); color: var(--green); border-radius: 11px;
+  padding: 13px; font-weight: 650; text-align: center; margin-bottom: 10px;
+  font-size: 15.5px;
+}
+.flat {
+  background: #eef1f4; color: var(--mid); border-radius: 11px; padding: 13px;
+  text-align: center; font-size: 15px;
+}
+
+.prog { margin: 2px 0 12px; }
+.prog .lbl { display: flex; justify-content: space-between; font-size: 14.5px; font-weight: 650; margin-bottom: 6px; }
+.prog .lbl .sub { color: var(--mid); font-weight: 400; font-size: 13px; }
+.bar { height: 8px; border-radius: 6px; background: #e3e8ee; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--navy-2); border-radius: 6px; }
+.bar i.full { background: var(--green); }
+
+.count { display: flex; gap: 8px; margin-bottom: 10px; }
+.count input {
+  flex: 1; padding: 14px; font-size: 16.5px; border: 1.5px solid #c3d2df;
+  border-radius: 11px; font-family: inherit; text-align: center; font-weight: 650;
+}
+.count .btn { width: auto; flex: 0 0 auto; padding: 15px 20px; margin: 0; }
+
+.foot { text-align: center; font-size: 12.5px; color: #93a1b0; padding: 18px 16px 24px; line-height: 1.6; }
+
+/* New: error and empty states. The prototype had neither — both are moments
+   for direction, not apology. */
+.notice {
+  margin: 24px 12px; background: #fff; border: 1px solid var(--line);
+  border-radius: 12px; padding: 20px; text-align: center;
+}
+.notice h2 { margin: 0 0 8px; font-size: 18px; }
+.notice p { margin: 0; color: var(--mid); font-size: 15px; }
+
+/* New: visible keyboard focus. Coordinators do use these on a laptop. */
+:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin side — dashboard, setup, installers, file tester.            */
+/* The installer portal keeps the phone-width card layout above; this  */
+/* is the desk-bound half and is allowed more room.                    */
+/* ------------------------------------------------------------------ */
+
+.admin { max-width: 940px; margin: 0 auto; padding-bottom: 60px; }
+
+.nav { background: var(--navy); color: #fff; padding: 0 20px; }
+.nav .inner { max-width: 940px; margin: 0 auto; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.nav .mark {
+  font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase;
+  color: #8fb0cc; font-weight: 600; margin-right: 18px; padding: 16px 0;
+}
+.nav a {
+  color: #cfe0ee; text-decoration: none; padding: 16px 12px; font-size: 15px;
+  font-weight: 600; border-bottom: 3px solid transparent;
+}
+.nav a:hover { color: #fff; }
+.nav a[aria-current="page"] { color: #fff; border-bottom-color: #8fb0cc; }
+
+.head { padding: 26px 20px 6px; }
+.head h1 { font-size: 26px; margin: 0; font-weight: 650; }
+.head p { margin: 8px 0 0; color: var(--mid); font-size: 15px; max-width: 62ch; }
+
+.panel {
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  margin: 14px 20px; padding: 20px;
+}
+.panel h2 { font-size: 18px; margin: 0 0 6px; font-weight: 650; }
+.panel > p { margin: 0 0 14px; color: var(--mid); font-size: 15px; }
+
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.stat { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.stat .v { font-size: 26px; font-weight: 650; line-height: 1.1; }
+.stat .k { font-size: 13px; color: var(--mid); margin-top: 4px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+th {
+  text-align: left; font-size: 12px; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--mid); font-weight: 700; padding: 0 12px 8px 0; border-bottom: 1px solid var(--line);
+}
+td { padding: 11px 12px 11px 0; border-bottom: 1px solid #f4f6f9; vertical-align: top; }
+td.num { font-variant-numeric: tabular-nums; color: var(--mid); white-space: nowrap; }
+
+.pill { display: inline-block; font-size: 12.5px; font-weight: 650; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
+.p-read { background: var(--green-bg); color: var(--green); }
+.p-check { background: var(--amber-bg); color: var(--amber); }
+.p-failed { background: var(--red-bg); color: var(--red); }
+
+.step-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; background: var(--navy-2); color: #fff;
+  border-radius: 50%; font-size: 14px; font-weight: 700; margin-right: 10px;
+  flex: 0 0 auto;
+}
+.panel h2.step { display: flex; align-items: center; }
+
+.warnbox {
+  background: var(--amber-bg); border: 1px solid #e8d5a8; border-radius: 10px;
+  padding: 13px 15px; font-size: 14.5px; margin: 0 0 14px;
+}
+.act { background: var(--navy-2); color: #fff; border: 0; border-radius: 10px;
+  padding: 11px 18px; font-size: 15px; font-weight: 650; cursor: pointer;
+  font-family: inherit; margin-right: 8px; }
+.act.ghost { background: #fff; color: var(--navy-2); border: 1.5px solid #c3d2df; }
+.act:disabled { opacity: .5; cursor: default; }
+
+.field {
+  width: 100%; padding: 11px 13px; border: 1.5px solid #c3d2df; border-radius: 10px;
+  font-family: inherit; font-size: 15px; margin-bottom: 12px;
+}
+
+pre.out {
+  background: #f6f8fa; border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px; overflow: auto; font-size: 12.5px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; max-height: 360px;
+}
+pre.out.ok { background: var(--green-bg); border-color: #bfe0cd; }
+pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
+
+.drop {
+  border: 2px dashed #c3d2df; border-radius: 12px; padding: 40px 20px;
+  text-align: center; color: var(--mid); cursor: pointer; background: #f8fafc;
+  font-size: 15.5px;
+}
+.drop.over { border-color: var(--navy-2); background: #eef4fa; }
+
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; }
+.empty { color: var(--mid); font-size: 15px; padding: 8px 0; }
