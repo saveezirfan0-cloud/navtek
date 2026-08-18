@@ -16,6 +16,7 @@ Precedence: COLUMN_IDS wins, then the board, then nothing (the writer skips any
 column it has no ID for).
 """
 
+import os
 import time
 
 from . import config
@@ -94,6 +95,10 @@ def resolved(monday, board_id=None, force=False):
         return _cache["columns"]
 
     columns = {k: v for k, v in config.COLUMNS.items() if v}
+    # Which of those the operator supplied, as opposed to built-in defaults.
+    # A stale value matters if someone typed it; a stale built-in default just
+    # means this isn't the board those defaults describe.
+    from_env, _ = config._parse_column_ids(os.environ.get("COLUMN_IDS", ""))
 
     try:
         live = monday.board_columns(board_id)
@@ -113,14 +118,17 @@ def resolved(monday, board_id=None, force=False):
     # the column, not the cause. Falling back to lookup-by-title recovers
     # automatically and says so.
     stale = [key for key, value in columns.items() if value not in live_ids]
-    if stale:
-        for key in stale:
-            columns.pop(key)
+    for key in stale:
+        columns.pop(key)
+
+    stale_from_env = sorted(k for k in stale if k in from_env)
+    if stale_from_env:
         _warn(
-            f"COLUMN_IDS has {len(stale)} ID(s) that are not on board "
-            f"{board_id} ({', '.join(sorted(stale))}). They are being ignored "
-            f"and read from the board instead — this is what you would expect "
-            f"after changing ORDERS_BOARD_ID. Clear COLUMN_IDS to silence it."
+            f"COLUMN_IDS names {len(stale_from_env)} column(s) that are not on "
+            f"board {board_id}: {', '.join(stale_from_env)}. They have been "
+            f"ignored and looked up on the board instead. Column IDs belong to "
+            f"a board, so this is expected after changing ORDERS_BOARD_ID — "
+            f"clearing COLUMN_IDS is the fix."
         )
 
     by_title = {}
@@ -134,7 +142,10 @@ def resolved(monday, board_id=None, force=False):
         if found and _compatible(found["type"], ctype):
             columns[key] = found["id"]
 
-    full = {**config.COLUMNS, **columns}
+    # Every known key, resolved or None. Deliberately NOT merged back over
+    # config.COLUMNS — doing that reinstates the very IDs just dropped as
+    # stale, which is exactly the bug this line replaces.
+    full = {key: columns.get(key) for key in config.COLUMNS}
     _cache.update({"at": now, "board": board_id, "columns": full})
     return full
 
