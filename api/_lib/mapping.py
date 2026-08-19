@@ -351,8 +351,44 @@ def to_column_values(parsed, columns=None, installer_item_ids=None):
     return out
 
 
+def install_sites(parsed):
+    """The order's install sites, one uniform dict per Install item.
+
+    Every order with Install Required = Yes gets exactly one Install item per
+    site: the multi-site rows when the eOrder has them, otherwise ONE site
+    built from the main delivery block — so the portal, the SLA clock and the
+    SMS trigger operate on a single object shape and single-site orders (the
+    majority) stop being a divergent code path. Orders with Install Required =
+    No — Change of Ownership, Service Only Renewal, customer self-install —
+    create none.
+
+    Every site carries the same keys, sourced the same way the multi-site rows
+    are: contact, phone, email, address, qty, and the order's dispatch date.
+    """
+    required = str(_get(parsed, "install_required", default="")).strip().lower()
+    if required != "yes":
+        return []
+
+    dispatch = _get(parsed, "order_date")
+    sites = _get(parsed, "multi_site", default=[]) or []
+    if sites:
+        return [{**site, "dispatched": site.get("dispatched") or dispatch}
+                for site in sites if isinstance(site, dict)]
+
+    return [{
+        "company": _get(parsed, "company"),
+        "contact": _get(parsed, "site_contact_name"),
+        "phone": _get(parsed, "site_contact_phone"),
+        "phone_e164": _get(parsed, "site_phone_e164"),
+        "email": _get(parsed, "site_contact_email"),
+        "address": site_address(parsed),
+        "qty": units_total(parsed),
+        "dispatched": dispatch,
+    }]
+
+
 def subitem_values(site, columns=None):
-    """Column values for one site of a Multiple Addresses order (§8.4)."""
+    """Column values for one Install item — a site of any order (§8.4)."""
     cols = columns or config.COLUMNS
     out = {}
 
@@ -366,6 +402,7 @@ def subitem_values(site, columns=None):
     put("site_email", v_email(site.get("email")))
     put("site_address", v_text(site.get("address")))
     put("units_total", v_number(site.get("qty")))
+    put("order_date", v_date(site.get("dispatched")))
     return out
 
 

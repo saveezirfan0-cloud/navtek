@@ -221,13 +221,20 @@ def _run(monday, store, payload, result, started):
     values, dropped = mapping.align_status_values(values, board_labels)
     warnings.extend(_dropped_warnings(dropped, cols))
 
-    # --- multi-site subitems (§8.4) ------------------------------------
+    # --- Install items: one subitem per site, for EVERY install (§8.4) --
+    #
+    # A single-site order gets one Install item carrying the same fields the
+    # multi-site ones do, sourced from the main delivery block; a Multiple
+    # Addresses order gets one per site row; Install Required = No gets none.
+    # The portal, SLA clock and SMS trigger all start from "staff sets the
+    # Installer column", so every installable order must produce the same
+    # uniform object — not two divergent code paths.
     #
     # Contained: subitems live on their own board with their own column IDs,
     # so a value write monday refuses must cost the subitem's values, not the
     # order. Runs before the row write so a failure here still counts toward
     # the status stamped on the row.
-    sites = parsed.get("multi_site") or []
+    sites = mapping.install_sites(parsed)
     if sites:
         try:
             result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
@@ -261,6 +268,16 @@ def _run(monday, store, payload, result, started):
         target_id,
         mapping.update_body(parsed, status, warnings, len(values), changes),
     )
+
+    # The ingest can complete the SMS rule's second half — a dispatch date
+    # arriving by file while the Installer column is already set (or the
+    # allocation suggestion above setting it while dispatch is known). The
+    # evaluation is idempotent and must never cost the order.
+    try:
+        from . import notify
+        result["notify"] = notify.evaluate(monday, store, target_id)
+    except Exception as exc:  # noqa: BLE001
+        result["notify"] = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
 
     duration_ms = int((time.time() - started) * 1000)
     store.record_ingest(

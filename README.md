@@ -6,10 +6,15 @@ and is the one that matters now.
 - **The order flow.** Drop a Teletrac Navman eOrder onto a row in **TN Orders
   2026/2025/2024** (`5834171978`) and the row fills itself in. Needs: the
   parser, the board columns, the webhook. Nothing else.
-- **The installer portal.** A magic link per installer account showing their
-  jobs, taking contacted / booked / progress / complete back to the board.
-  Later. With no Installer Accounts board configured, the order flow skips
-  allocation entirely rather than flagging every order as unmatched.
+- **The installer workflow.** A magic link per installer account showing their
+  jobs, taking contacted / booked / progress / complete back to the board —
+  plus the machinery around it: one Install item per site on every
+  installable order, the allocation SMS (installer set AND dispatched), the
+  2-business-day SLA clock with an Australian-holiday calendar, reallocation
+  handling, and the "6.1 Installer Esc." escalation. All of it sits behind a
+  go-live cutoff and a shadow-mode flag — see **The SLA engine** below. With
+  no Installer Accounts board configured, the order flow skips allocation
+  entirely rather than flagging every order as unmatched.
 
 Built to the Aug 2026 build brief. Section references below point at it.
 
@@ -96,9 +101,13 @@ the contract is what to check first if output looks thin.
 | `/setup` | Board setup. Admin only, plus `SETUP_KEY` for the board-changing steps. |
 | `/installers` | Accounts and their magic links. Admin only. |
 | `/j/[token]` | The installer portal via magic link — no login, the link is the password |
-| `/api/py/eorder` | monday webhook |
+| `/api/py/eorder` | monday webhook — eOrder file drops |
+| `/api/py/installer-change` | monday webhook — Installer column (reallocation) |
+| `/api/py/portal/refresh` | monday webhook — dispatch date / status edits refresh the job cache |
+| `/api/py/sla/sweep` | the daily SLA pass (Vercel cron; portal secret or `CRON_SECRET`) |
+| `/api/py/portal/resync` | hourly cache rebuild (Vercel cron; same guard) |
 | `/api/py/parse` | xlsx in, JSON out. No monday, no database. |
-| `/api/py/health` | What's configured and what isn't |
+| `/api/py/health` | What's configured and what isn't — including the SLA engine's mode |
 
 ### Logins and access
 
@@ -138,6 +147,39 @@ down. Each of those was verified by hand once and then quietly broken by a
 later change; that is why they are tests now.
 
 Or use `/try` in the browser, which needs no local setup at all.
+
+---
+
+## The SLA engine
+
+The rule: an installer must contact the customer within `SLA_BUSINESS_DAYS`
+(default 2) business days of hardware dispatch — business days per the
+installer account's **State** (`api/_lib/holidays_au.py` holds the national +
+NSW + VIC public holidays as data; a test fails once the covered years run
+out). The allocation SMS fires when **both** halves are true — Installer set
+AND dispatched, whichever lands second — never on installer-set alone.
+
+Every send and escalation claims a row in the `notifications` table
+(`unique (item, kind)`) *before* acting, so webhook retry storms and re-edits
+can't double-text. Reallocation (Installer column changes A → B) texts B like
+a fresh allocation with a **fresh SLA clock from the reallocation date**,
+tells A "nothing more to do" only if A had been notified, and never texts
+anyone about an undispatched job. A breach sets the order's existing
+**"6.1 Installer Esc."** status label, once per breach.
+
+Two guards sit in front of all of it:
+
+- **`SLA_GO_LIVE_DATE`** — only jobs *dispatched on or after* this date enter
+  the engine. Unset means the engine is off, not "no cutoff": the board
+  carries jobs 212 business days overdue, and a sweep without the cutoff
+  would text every installer about months-old backlog on day one.
+- **`SLA_NOTIFICATIONS_ENABLED`** — default `false`: the daily sweep runs in
+  shadow mode, recording breaches and logging what it *would* send. Flip to
+  `true` only after reading a week of shadow output.
+
+`vercel.json` schedules the sweep daily and the portal cache resync hourly;
+set `CRON_SECRET` so only Vercel can trigger them. `api/_lib/sms.py` is a
+logging stub — the SMS provider is a config change in that one module.
 
 ---
 

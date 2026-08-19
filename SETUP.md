@@ -154,13 +154,16 @@ GitHub replaces the placeholder. Click the file to confirm it now begins
    the tables. On most projects it is already true and the script changes
    nothing; on projects where it isn't, every key fails with "permission
    denied" until this runs.
+7. Repeat with `0004_installer_flow.sql` — that one creates the SMS/SLA
+   dedupe table and adds a State to each installer account. Without it the
+   installer notifications can't guarantee one-text-per-job, so they stay off.
 
 You want **Success. No rows returned.** That is what a successful table
 creation looks like — it isn't an error.
 
-Confirm it: click **Table Editor**. You should see seven tables —
+Confirm it: click **Table Editor**. You should see eight tables —
 `installer_accounts`, `eorder_ingests`, `portal_events`, `jobs_cache`,
-`unknown_order_reasons`, `app_users`, `app_sessions`.
+`unknown_order_reasons`, `app_users`, `app_sessions`, `notifications`.
 
 ### 3.3 Copy two values
 
@@ -324,6 +327,12 @@ only**, so the existing DocuSign `files` column carries on being ignored, and
 pressing it twice reuses the existing webhook rather than registering a second
 one that would process every file twice.
 
+The same press also registers the installer-flow webhooks — on the
+**Installer**, dispatch-date and **Status** columns — so reallocations and
+direct edits in monday reach the portal within seconds. Columns that don't
+exist yet are skipped and reported, and running the step again after they're
+created picks them up. All idempotent: nothing is ever registered twice.
+
 **5 — Check everything works.** Press **Run the check**. It tests the monday
 token, the board, the columns, the parser, the webhook and the database, and
 tells you which are working. It is read-only.
@@ -389,6 +398,37 @@ boards. The old free-text `installer` column is left where it is, as history.
 **B — Copy the installers into the database.** The portal looks a magic link up
 in the database, so an account added in monday stays invisible until this runs.
 Run it again whenever you add, deactivate or reissue an account.
+
+### Switching on the SLA engine *(after the portal is in use)*
+
+The SLA engine — the 2-business-day contact clock, the installer SMS, the
+"6.1 Installer Esc." escalation — ships **off** and comes on in two separate
+moves, in this order:
+
+1. **Set the cutoff.** Add `SLA_GO_LIVE_DATE` (e.g. `2026-09-01`) to the
+   Vercel environment variables and redeploy. Only jobs **dispatched on or
+   after that date** ever enter the engine. The board carries jobs up to 212
+   business days overdue; without this cutoff, day one texts every installer
+   about months-old backlog and kills trust in the first hour. Everything
+   older stays a by-hand reconciliation.
+
+   With just this set the engine runs in **shadow mode**: the daily sweep
+   computes ages, records breaches, and logs what it *would* send — visible in
+   the Vercel function logs — but sends nothing and touches no status.
+
+2. **Go live.** After a week of real orders, read the shadow log. When it
+   would have texted the right people about the right jobs, set
+   `SLA_NOTIFICATIONS_ENABLED` to `true` and redeploy.
+
+Also worth setting: `CRON_SECRET` (any random string) — Vercel attaches it to
+the scheduled sweep (daily) and portal resync (hourly) that `vercel.json`
+already defines, so nobody else can trigger them. Each installer account has a
+**State** column (NSW, VIC, …) on the Installer Accounts board; the SLA clock
+skips that state's public holidays. Blank means NSW. Re-run setup step A once
+after this update to add the column, and step B to sync it.
+
+The SMS itself currently goes to a **log, not a phone** — the provider
+(Twilio or similar) is a one-module change in `api/_lib/sms.py` once chosen.
 
 ---
 

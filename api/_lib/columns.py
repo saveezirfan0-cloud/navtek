@@ -64,6 +64,10 @@ INSTALLER_LINK_COLUMN = ("installer", "Installer", "board_relation")
 LEGACY_COLUMNS = [
     ("opportunity_id", ["OPPORTUNITY ID #", "Opportunity ID #", "Opportunity ID",
                         "Opportunity Field ID"], "text"),
+    # The board's own working status — where "6.1 Installer Esc." lives. The
+    # SLA escalation writes that one existing label and nothing else; a board
+    # without this column simply skips escalation and says so.
+    ("order_status", ["Status", "Order Status", "Job Status"], "status"),
     ("order_type", ["Order Type"], "status"),
     ("platform", ["Platform"], "status"),
     ("migration_required", ["Migration Required", "Migration Required?",

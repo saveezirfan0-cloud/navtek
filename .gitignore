@@ -12,3 +12,6 @@ node_modules/
 .env
 .env.local
 .env*.local
+
+# TypeScript incremental build state
+tsconfig.tsbuildinfo

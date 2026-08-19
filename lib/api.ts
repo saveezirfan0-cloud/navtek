@@ -70,6 +70,13 @@ export type JobsResponse = {
   action_needed: Job[];
   waiting: Job[];
   overdue: number;
+  sla_days?: number;
+  /** When this list was last read from monday (ISO). Null when even the
+   * cache is empty. */
+  refreshed_at?: string | null;
+  /** True when the list came from a cache more than an hour old — the page
+   * shows "Updated 3h ago" so nobody drives to a reallocated site. */
+  stale?: boolean;
 };
 
 export async function getJobs(token: string): Promise<JobsResponse | null> {
