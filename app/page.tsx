@@ -2,7 +2,7 @@ import AutoRefresh from "./AutoRefresh";
 import Nav from "./Nav";
 import NoAccess from "./NoAccess";
 import { getHealth, getRecent } from "@/lib/api";
-import { requireUser } from "@/lib/auth";
+import { requireViewer } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -26,11 +26,11 @@ function when(iso: string) {
 }
 
 export default async function Dashboard() {
-  const user = await requireUser();
-  if (!user.can_orders) {
+  const { user, realUser } = await requireViewer();
+  if (!user.can_orders && !user.is_admin) {
     return (
       <>
-        <Nav current="/" user={user} />
+        <Nav current="/" user={user} realUser={realUser} />
         <NoAccess user={user} need="Orders" />
       </>
     );
@@ -54,7 +54,7 @@ export default async function Dashboard() {
   return (
     <>
       <AutoRefresh seconds={15} />
-      <Nav current="/" user={user} />
+      <Nav current="/" user={user} realUser={realUser} />
       <div className="admin">
         <div className="head">
           <h1>Orders</h1>

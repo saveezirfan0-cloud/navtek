@@ -315,6 +315,39 @@ export async function adminUpdateUser(
   });
 }
 
+// -- previewing a user (admin) -----------------------------------------------
+
+/** The AuthUser a given login resolves to — admin session required. Used to
+ * render the app through that user's eyes without minting them a session. */
+export async function adminPreviewUser(
+  session: string,
+  userId: string,
+): Promise<AuthUser | null> {
+  try {
+    const data = await call(`/users/preview?user_id=${encodeURIComponent(userId)}`, {
+      headers: { "X-Session": session },
+    });
+    return data.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The job list a given installer login would see — admin session required,
+ * read only (no 'viewed' event is recorded server side). */
+export async function getPreviewJobs(
+  session: string,
+  userId: string,
+): Promise<JobsResponse | null> {
+  try {
+    return await call(`/portal/preview-jobs?user_id=${encodeURIComponent(userId)}`, {
+      headers: { "X-Session": session },
+    });
+  } catch {
+    return null;
+  }
+}
+
 // -- the portal, for logged-in installer users ------------------------------
 
 export async function getMyJobs(session: string): Promise<JobsResponse | null> {

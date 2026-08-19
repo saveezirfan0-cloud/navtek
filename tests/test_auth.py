@@ -100,3 +100,10 @@ def test_user_management_requires_a_session():
 
 def test_my_jobs_requires_a_session():
     assert client().get("/api/py/portal/my-jobs").status_code == 401
+
+
+def test_previewing_a_user_requires_a_session():
+    """Preview renders the app through another login's eyes — admin only,
+    and the httpOnly cookie that drives it is inert without an admin session."""
+    assert client().get("/api/py/users/preview?user_id=x").status_code == 401
+    assert client().get("/api/py/portal/preview-jobs?user_id=x").status_code == 401

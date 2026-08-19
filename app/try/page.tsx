@@ -1,23 +1,23 @@
 import Nav from "../Nav";
 import NoAccess from "../NoAccess";
 import Tester from "./Tester";
-import { requireUser } from "@/lib/auth";
+import { requireViewer } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function TryPage() {
-  const user = await requireUser();
-  if (!user.can_orders) {
+  const { user, realUser } = await requireViewer();
+  if (!user.can_orders && !user.is_admin) {
     return (
       <>
-        <Nav current="/try" user={user} />
+        <Nav current="/try" user={user} realUser={realUser} />
         <NoAccess user={user} need="Orders" />
       </>
     );
   }
   return (
     <>
-      <Nav current="/try" user={user} />
+      <Nav current="/try" user={user} realUser={realUser} />
       <div className="admin">
         <div className="head">
           <h1>File tester</h1>

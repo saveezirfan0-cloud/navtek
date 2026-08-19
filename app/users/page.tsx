@@ -2,16 +2,16 @@ import Nav from "../Nav";
 import NoAccess from "../NoAccess";
 import UsersAdmin from "./UsersAdmin";
 import { adminListUsers } from "@/lib/api";
-import { requireUser, sessionToken } from "@/lib/auth";
+import { requireViewer, sessionToken } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function UsersPage() {
-  const user = await requireUser();
+  const { user, realUser } = await requireViewer();
   if (!user.is_admin) {
     return (
       <>
-        <Nav current="/users" user={user} />
+        <Nav current="/users" user={user} realUser={realUser} />
         <NoAccess user={user} need="Admin" />
       </>
     );
@@ -22,7 +22,7 @@ export default async function UsersPage() {
 
   return (
     <>
-      <Nav current="/users" user={user} />
+      <Nav current="/users" user={user} realUser={realUser} />
       <div className="admin">
         <div className="head">
           <h1>Users</h1>

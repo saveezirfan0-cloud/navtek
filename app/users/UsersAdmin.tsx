@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { AuthUser, InstallerAccountRef } from "@/lib/api";
-import { createUserAction, updateUserAction } from "./actions";
+import { createUserAction, startPreviewAction, updateUserAction } from "./actions";
 
 export default function UsersAdmin({
   me,
@@ -54,6 +54,7 @@ export default function UsersAdmin({
                   <th>Admin</th>
                   <th>Active</th>
                   <th>Password</th>
+                  <th>See their view</th>
                 </tr>
               </thead>
               <tbody>
@@ -129,6 +130,26 @@ export default function UsersAdmin({
                           disabled={pending}
                           onReset={(password) => update({ id: u.id, password })}
                         />
+                      </td>
+                      <td>
+                        {/* What would this login see? Renders the app with
+                            their access flags — read-only, clearly bannered,
+                            no session minted for them. */}
+                        <button
+                          className="btn-ghost"
+                          type="button"
+                          disabled={pending || self}
+                          title={self ? "You're already seeing your own view" : `Preview the app as ${u.name}`}
+                          onClick={() =>
+                            start(async () => {
+                              setError(null);
+                              const result = await startPreviewAction(u.id);
+                              if (result && !result.ok) setError(result.error);
+                            })
+                          }
+                        >
+                          👁 Preview
+                        </button>
                       </td>
                     </tr>
                   );

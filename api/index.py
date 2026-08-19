@@ -445,6 +445,55 @@ def users_update(
     return {"user": users.public_user(row)}
 
 
+# -- previewing a user (admin) ------------------------------------------------
+
+@app.get("/api/py/users/preview")
+def user_preview(
+    user_id: str = Query(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """What a given login would see — admin only.
+
+    Returns the same shape as /auth/me so the web half can render the app
+    through that user's eyes. Deliberately NOT a session for the target: no
+    token is minted, nothing is impersonated — the admin's own session
+    authorises every request, and writes stay the admin's writes.
+    """
+    _authorise(x_portal_secret)
+    store = Store()
+    _require_admin(_session_user(store, x_session))
+    target = store.user_by_id(user_id)
+    if not target:
+        raise HTTPException(404, "No such user.")
+    return {"user": users.public_user(target)}
+
+
+@app.get("/api/py/portal/preview-jobs")
+def portal_preview_jobs(
+    user_id: str = Query(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """The job list a given installer login would see — admin only, read only.
+
+    The 'viewed' audit event answers "did the installer actually look", so a
+    preview must not forge one (record_view=False).
+    """
+    _authorise(x_portal_secret)
+    store = Store()
+    _require_admin(_session_user(store, x_session))
+    target = store.user_by_id(user_id)
+    if not target:
+        raise HTTPException(404, "No such user.")
+    account = store.account_by_id(target.get("installer_account_id"))
+    if not account:
+        raise HTTPException(
+            409, "That login isn't linked to an installer account yet."
+        )
+    return portal.jobs_for_account(Monday(), store, account, record_view=False)
+
+
 # -- the portal, for logged-in installer users ------------------------------
 
 def _installer_account(store, user):

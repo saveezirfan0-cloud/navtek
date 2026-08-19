@@ -114,6 +114,13 @@ their SHA-256, passwords only as PBKDF2 hashes (`supabase/migrations/
 click. Magic links (`/j/[token]`) are unchanged and independent — an installer
 can hold a link, a login, or both.
 
+**Preview.** Each row on `/users` has a 👁 Preview button: the app renders
+exactly as that login would see it — nav, pages, and their portal jobs — under
+a loud banner, read-only. No session is minted for the previewed user; the
+admin's own session authorises every request, and the preview cookie is inert
+without one. It exists so "what will this person see when I flip this switch"
+is a thing you check, not guess.
+
 `/parse` is deliberately dependency-free — it is how you check a file without
 writing anything anywhere, and what Make would call if the flow ever moves
 there (§3.3).
