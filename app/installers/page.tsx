@@ -1,7 +1,10 @@
 import Nav from "../Nav";
 import NoAccess from "../NoAccess";
+import CopyLink from "./CopyLink";
 import { getInstallers } from "@/lib/api";
 import { requireViewer } from "@/lib/auth";
+
+export const metadata = { title: "Installers · Navtek" };
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +48,7 @@ export default async function InstallersPage() {
               No accounts yet. Run <a href="/setup">Setup steps 3 and 5</a>.
             </p>
           ) : (
+            <div className="scroll-x">
             <table>
               <thead>
                 <tr>
@@ -70,9 +74,11 @@ export default async function InstallersPage() {
                       {a.mobile && <div className="mono">{a.mobile}</div>}
                     </td>
                     <td className="mono">/j/{a.token.slice(0, 10)}…</td>
-                    <td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <CopyLink token={a.token} />{" "}
                       <a className="act ghost" href={`/j/${a.token}`} target="_blank"
-                         style={{ textDecoration: "none", display: "inline-block" }}>
+                         style={{ textDecoration: "none", display: "inline-block" }}
+                         title="Opens the portal as the installer — this records a 'viewed' event on their account">
                         Open
                       </a>
                     </td>
@@ -80,6 +86,7 @@ export default async function InstallersPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       </div>

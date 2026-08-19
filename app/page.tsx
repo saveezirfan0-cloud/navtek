@@ -4,6 +4,8 @@ import NoAccess from "./NoAccess";
 import { getHealth, getRecent } from "@/lib/api";
 import { requireViewer } from "@/lib/auth";
 
+export const metadata = { title: "Orders · Navtek" };
+
 export const dynamic = "force-dynamic";
 
 const PILL: Record<string, [string, string]> = {
@@ -20,13 +22,22 @@ const HOOK_PILL: Record<string, [string, string]> = {
 
 function when(iso: string) {
   const d = new Date(iso);
+  const thisYear = d.getFullYear() === new Date().getFullYear();
   return d.toLocaleString("en-AU", {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+    ...(thisYear ? {} : { year: "numeric" }),
   });
 }
 
 export default async function Dashboard() {
-  const { user, realUser } = await requireViewer();
+  // All three in flight together — the gate is checked when they land, and
+  // health/recent carry nothing user-scoped, so fetching before the check
+  // costs nothing and saves a full round trip on the most-visited page.
+  const [{ user, realUser }, health, recent] = await Promise.all([
+    requireViewer(),
+    getHealth(),
+    getRecent(),
+  ]);
   if (!user.can_orders && !user.is_admin) {
     return (
       <>
@@ -36,7 +47,6 @@ export default async function Dashboard() {
     );
   }
 
-  const [health, recent] = await Promise.all([getHealth(), getRecent()]);
   const rows = recent.ingests;
 
   const counts = {
@@ -112,6 +122,9 @@ export default async function Dashboard() {
               <div className="k">Duplicate re-reads (testing)</div>
             </div>
           </div>
+          <p className="tiny" style={{ marginTop: 10 }}>
+            Counts cover the {rows.length} most recent reads.
+          </p>
         </div>
 
         <div className="panel">
@@ -139,6 +152,7 @@ export default async function Dashboard() {
               TN Orders and it will appear here.
             </p>
           ) : (
+            <div className="scroll-x">
             <table>
               <thead>
                 <tr>
@@ -191,6 +205,7 @@ export default async function Dashboard() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 

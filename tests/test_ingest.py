@@ -190,7 +190,8 @@ def test_new_eorder_populates_and_reports_clean():
     result, monday, _ = run(KANE)
     assert result["ok"]
     assert result["status"] == "✅ Read", result.get("warnings")
-    assert monday.renamed == "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
+    # The rename rides in the main mutation now — one round trip, not two.
+    assert monday.written["name"] == "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
     assert monday.written["text_contact"] == "Gerard Cahalan"
     assert monday.written["numeric_units"] == "44.0"
     assert monday.written["color_install"] == {"label": "Yes"}
@@ -331,7 +332,8 @@ def test_the_order_still_lands_when_the_database_is_broken():
     result, monday, _ = run(KANE, store=FakeStore(broken=True))
     assert result["ok"]
     assert result["status"] == "✅ Read"
-    assert monday.renamed == "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
+    # The rename rides in the main mutation now — one round trip, not two.
+    assert monday.written["name"] == "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
     assert result["database"] == "simulated failure"
 
 
@@ -384,7 +386,7 @@ def test_an_upload_still_runs_when_files_are_present():
                          "value": {"files": [{"name": "eorder.xlsx"}]}}}
     result = ingest.handle_webhook(payload, monday, FakeStore())
     assert result["ok"] and result["status"] == "✅ Read"
-    assert monday.renamed.startswith("KANE CIVIL")
+    assert monday.written["name"].startswith("KANE CIVIL")
 
 
 def test_odd_column_settings_never_crash_label_parsing():
@@ -491,3 +493,52 @@ def test_multi_site_orders_survive_subitem_column_rejection(monkeypatch):
     # Both sites exist as subitems, created bare after the values were refused.
     assert monday.subitems_created == ["Site A — 4 units", "Site B — 8 units"]
     assert monday.written["color_status"] == {"label": "Check"}
+
+
+# -- the failure path itself must not have failure modes ----------------------
+
+def test_catchall_failures_still_stamp_failed_from_board_columns(monkeypatch):
+    """The catch-all path reaches _fail with no resolved columns. It must
+    resolve the status column from the board so ❌ Failed shows on the row —
+    before, a catastrophic failure left the status blank and the Update was
+    the only trace."""
+    def explode(*args, **kwargs):
+        raise RuntimeError("simulated catastrophic failure")
+
+    monkeypatch.setattr(ingest, "_run", explode)
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    monday = FakeMonday(blob(KANE))
+    result = ingest.handle_webhook(
+        {"event": {"pulseId": 123, "boardId": BOARD_ID}}, monday, FakeStore())
+    assert not result["ok"]
+    assert monday.written.get("color_status") == {"label": "Failed"}
+    assert "Could not read eOrder" in monday.updates[0]
+
+
+def test_the_update_still_posts_when_the_status_write_is_refused():
+    """Reporting must not depend on the status column cooperating: if monday
+    refuses the ❌ Failed write, the person still needs the explanation."""
+    class RefusesWrites(FakeMonday):
+        def set_columns(self, board_id, item_id, values):
+            raise MondayError("simulated refusal")
+
+    monday = RefusesWrites(b"this is not a spreadsheet")
+    result, monday, _ = run(KANE, monday=monday)
+    assert not result["ok"]
+    assert monday.written == {}
+    assert any("Could not read eOrder" in u for u in monday.updates)
+
+
+def test_events_for_another_board_are_turned_away():
+    """The webhook is registered on one board; a delivery naming another —
+    misconfiguration or someone probing the public endpoint — must end before
+    any monday call is made."""
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    monday = FakeMonday(blob(KANE))
+    result = ingest.handle_webhook(
+        {"event": {"pulseId": 123, "boardId": 999}}, monday, FakeStore())
+    assert not result["ok"]
+    assert "not the orders board" in result["reason"]
+    assert monday.written == {} and monday.updates == [] and monday.downloads == 0

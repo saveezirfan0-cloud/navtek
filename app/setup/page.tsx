@@ -3,6 +3,8 @@ import NoAccess from "../NoAccess";
 import SetupSteps from "./SetupSteps";
 import { requireViewer } from "@/lib/auth";
 
+export const metadata = { title: "Setup · Navtek" };
+
 export const dynamic = "force-dynamic";
 
 export default async function SetupPage() {

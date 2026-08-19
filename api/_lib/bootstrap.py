@@ -275,6 +275,11 @@ def eorder_column_id(monday, board_id=None):
 
 def register_webhook(monday, url, board_id=None, file_column_id=None):
     board_id = board_id or config.ORDERS_BOARD_ID
+    # With WEBHOOK_SECRET set, the registration carries it and /eorder rejects
+    # deliveries without it. Registered here so setup step 4 is the only thing
+    # to re-run after setting the variable.
+    if config.WEBHOOK_SECRET and "hook=" not in url:
+        url = f"{url}?hook={config.WEBHOOK_SECRET}"
     column_id = file_column_id or eorder_column_id(monday, board_id)
     if not column_id:
         raise ValueError(

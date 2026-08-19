@@ -58,17 +58,29 @@ def jobs_for_account(monday, store, account, record_view=True):
     jobs = []
 
     if column_id:
+        # Only the columns _shape() actually reads — the board carries 25+,
+        # including raw JSON blobs, and this query runs on a phone's clock.
+        # Inlined as literals (our own resolved IDs) rather than a variable:
+        # column_values(ids:) wants [String!], which the GraphQL lint in
+        # tests/test_graphql.py rightly forbids for column_values FILTERS.
+        wanted = [cols.get(k) for k in (
+            "site_contact", "site_phone", "site_address", "opportunity_id",
+            "order_date", "contacted_date", "booked_date",
+            "scheduled_install_date", "units_total", "units_installed",
+        )]
+        import json as _json
+        ids_literal = _json.dumps([c for c in wanted if c])
         try:
             raw = monday.gql(
-                """
-                query ($b: ID!, $c: String!, $v: [String]!) {
+                f"""
+                query ($b: ID!, $c: String!, $v: [String]!) {{
                   items_page_by_column_values (
                     board_id: $b, limit: 100,
-                    columns: [{column_id: $c, column_values: $v}]
-                  ) {
-                    items { id name column_values { id type text value } }
-                  }
-                }
+                    columns: [{{column_id: $c, column_values: $v}}]
+                  ) {{
+                    items {{ id name column_values (ids: {ids_literal}) {{ id type text }} }}
+                  }}
+                }}
                 """,
                 {
                     "b": str(config.ORDERS_BOARD_ID),
@@ -80,12 +92,14 @@ def jobs_for_account(monday, store, account, record_view=True):
             jobs = []
             for item in items:
                 jobs.extend(install_items(monday, item, cols))
-            for job in jobs:
-                # Keyed by the install item's own id — two sites of one order
-                # must not overwrite each other in the cache.
-                store.cache_job(
-                    job["install_id"], job, installer_account_id=account["id"]
-                )
+            # One batched upsert, keyed by the install item's own id — two
+            # sites of one order must not overwrite each other in the cache.
+            store.cache_jobs([
+                {"monday_item_id": job["install_id"], "data": job,
+                 "monday_subitem_id": job.get("subitem_id"),
+                 "installer_account_id": account["id"]}
+                for job in jobs
+            ])
         except Exception:  # noqa: BLE001 - fall back rather than show nothing
             jobs = [row["data"] for row in store.cached_jobs(account["id"])]
     else:

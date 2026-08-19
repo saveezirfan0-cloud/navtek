@@ -1,5 +1,6 @@
 import type { Job } from "@/lib/api";
 import JobActions from "./JobActions";
+import { fmtDate } from "./dates";
 
 /**
  * One job, as a tappable card. Shared between the magic-link portal at
@@ -20,7 +21,7 @@ function chip(job: Job) {
         text: `🔧 ${job.units_installed} of ${job.units_total} fitted`,
       };
     }
-    return { cls: "c-green", text: `📅 Booked${job.scheduled ? ` ${job.scheduled}` : ""}` };
+    return { cls: "c-green", text: `📅 Booked${job.scheduled ? ` ${fmtDate(job.scheduled)}` : ""}` };
   }
   if (job.contacted) {
     return { cls: "c-blue", text: "☎ Contacted — no date booked yet" };
@@ -54,7 +55,7 @@ export default function JobCard({
         {job.site_address && <div className="loc">{job.site_address}</div>}
         {units && <div className="kit">{units}</div>}
         <div className="meta">
-          {job.dispatched ? `Dispatched ${job.dispatched}` : "Not yet dispatched"}
+          {job.dispatched ? `Dispatched ${fmtDate(job.dispatched)}` : "Not yet dispatched"}
           {job.opportunity_id ? ` · ${job.opportunity_id}` : ""}
         </div>
         <span className={`chip ${tag.cls}`}>{tag.text}</span>
@@ -71,7 +72,7 @@ export default function JobCard({
           )}
           <div className="row">
             <span className="k">Dispatched</span>
-            <span className="v">{job.dispatched ?? "Not yet"}</span>
+            <span className="v">{fmtDate(job.dispatched) ?? "Not yet"}</span>
           </div>
           <div className="row">
             <span className="k">Site contact</span>
@@ -84,7 +85,7 @@ export default function JobCard({
           {job.contacted && (
             <div className="row">
               <span className="k">You contacted</span>
-              <span className="v">{job.contacted}</span>
+              <span className="v">{fmtDate(job.contacted)}</span>
             </div>
           )}
         </div>

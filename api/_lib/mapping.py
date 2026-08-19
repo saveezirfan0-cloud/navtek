@@ -189,7 +189,13 @@ def align_status_values(values, labels_by_column):
         if proposed in available:
             aligned[column_id] = value
             continue
-        by_normalised = {normalise_label(label): label for label in available}
+        # setdefault: when two board labels normalise identically ("Read" and
+        # "✅ Read" on one column), the FIRST wins — index order is the column's
+        # own label order, and last-wins made the rewrite depend on dict
+        # iteration order.
+        by_normalised = {}
+        for label in available:
+            by_normalised.setdefault(normalise_label(label), label)
         wanted = normalise_label(proposed)
         # A label that normalises to nothing (pure emoji/punctuation) has no
         # text to match on — treat it as unmatched rather than pairing two
