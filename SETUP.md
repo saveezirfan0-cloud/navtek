@@ -154,7 +154,9 @@ GitHub replaces the placeholder. Click the file to confirm it now begins
    the tables. On most projects it is already true and the script changes
    nothing; on projects where it isn't, every key fails with "permission
    denied" until this runs.
-7. Repeat with `0004_operations.sql` — webhook dedup, the notification
+7. Repeat with `0004_webhook_log.sql` — the delivery log that makes skipped
+   and failed webhook runs visible on the dashboard.
+8. Repeat with `0005_operations.sql` — webhook dedup, the notification
    ledger the SLA engine uses, and the per-account State column for
    public-holiday-aware SLA clocks.
 

@@ -59,6 +59,12 @@ async function call(path: string, init: RequestInit = {}) {
 
 export type Job = {
   item_id: string;
+  /** The install item's own id — the subitem when the order has one per site,
+   * the order row itself for orders that predate universal install items. */
+  install_id?: string;
+  subitem_id?: string | null;
+  /** The install item's name, e.g. "GPS Tech — 7 units", when it's a subitem. */
+  site?: string | null;
   name: string;
   customer: string;
   site_contact: string | null;
@@ -108,6 +114,7 @@ export async function postAction(input: {
 // -- dashboard -------------------------------------------------------------
 
 export type Ingest = {
+  monday_item_id: number | null;
   opportunity_id: string | null;
   file_name: string | null;
   status: "read" | "check" | "failed";
@@ -128,6 +135,7 @@ export type Health = {
   unmapped_optional?: string[];
   orders_board: number;
   write_order_type: boolean;
+  allow_duplicate_files?: boolean;
 };
 
 export async function getHealth(): Promise<Health | null> {
@@ -140,9 +148,25 @@ export async function getHealth(): Promise<Health | null> {
 
 export type DbState = { ok: boolean; state: string; detail?: string };
 
+/** One webhook delivery from monday, whatever came of it. monday's own
+ * automation log shows all of these as Success; this is where a skipped
+ * duplicate or a no-file delivery becomes visible. */
+export type WebhookRun = {
+  monday_item_id: number | null;
+  opportunity_id: string | null;
+  file_name: string | null;
+  outcome: "processed" | "skipped" | "failed";
+  reason: string | null;
+  status: string | null;
+  duration_ms: number | null;
+  created_at: string;
+};
+
 export async function getRecent(): Promise<{
   enabled: boolean;
   ingests: Ingest[];
+  webhooks?: WebhookRun[];
+  webhook_log_ready?: boolean;
   database?: DbState;
 }> {
   try {
@@ -153,6 +177,7 @@ export async function getRecent(): Promise<{
     return {
       enabled: false,
       ingests: [],
+      webhooks: [],
       database: {
         ok: false,
         state: "unreachable",

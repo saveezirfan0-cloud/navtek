@@ -77,7 +77,9 @@ def handle_webhook(payload, monday=None, store=None):
     board_id = int(event.get("boardId") or config.ORDERS_BOARD_ID)
 
     if not item_id:
-        return {"ok": False, "reason": "no pulseId in payload"}
+        outcome = {"ok": False, "reason": "no pulseId in payload"}
+        _log_webhook(store, outcome, started)
+        return outcome
 
     # The board this automation may touch is configuration, not payload. The
     # webhook is registered on one board, so a delivery naming another one is
@@ -100,7 +102,7 @@ def handle_webhook(payload, monday=None, store=None):
                 "skipped": "duplicate webhook delivery — already being processed"}
 
     try:
-        return _run(monday, store, payload, result, started)
+        outcome = _run(monday, store, payload, result, started)
     except Exception as exc:  # noqa: BLE001
         # Anything unforeseen still gets reported on the row. A webhook that
         # 500s silently looks identical to one that never fired, and monday
@@ -108,7 +110,34 @@ def handle_webhook(payload, monday=None, store=None):
         detail = f"{type(exc).__name__}: {exc}"
         _fail(monday, board_id, item_id,
               f"Something went wrong reading this eOrder.<br>{detail}")
-        return {**result, "ok": False, "reason": detail}
+        outcome = {**result, "ok": False, "reason": detail}
+
+    _log_webhook(store, outcome, started)
+    return outcome
+
+
+def _log_webhook(store, outcome, started):
+    """One ledger row per webhook delivery, whatever happened.
+
+    The endpoint always returns 200 (so monday doesn't retry-storm), which
+    means monday's own automation log shows every run as Success — a skipped
+    duplicate, a removed file and a fully processed order are indistinguishable
+    from monday's side. This log is where the difference is visible.
+    """
+    try:
+        store.record_webhook(
+            monday_item_id=outcome.get("item_id"),
+            monday_board_id=outcome.get("board_id"),
+            opportunity_id=outcome.get("opportunity_id"),
+            file_name=outcome.get("file_name"),
+            outcome=("skipped" if outcome.get("skipped")
+                     else "processed" if outcome.get("ok") else "failed"),
+            reason=outcome.get("skipped") or outcome.get("reason"),
+            status=outcome.get("status"),
+            duration_ms=int((time.time() - started) * 1000),
+        )
+    except Exception:  # noqa: BLE001 - the log must never cost the order
+        pass
 
 
 def _delivery_key(event):
@@ -203,8 +232,28 @@ def _run(monday, store, payload, result, started):
         return {**result, "ok": False, "reason": "no opportunity_id"}
 
     # --- idempotency (criterion 2) -------------------------------------
+    #
+    # Skipping must still be VISIBLE. This happens when a person re-drops a
+    # file (monday doesn't retry a 200), and to them a silent skip looks
+    # exactly like the automation being broken — the run shows Success in
+    # monday's log and nothing changes on the row.
+    #
+    # ALLOW_DUPLICATE_FILES=true (testing) processes the duplicate instead —
+    # existing monday values are still protected by merge_preserving below.
     if store.already_ingested(opportunity_id, file_sha):
-        return {**result, "ok": True, "skipped": "identical file already read"}
+        if not config.ALLOW_DUPLICATE_FILES:
+            try:
+                monday.post_update(
+                    item_id,
+                    "ℹ️ <b>Already read</b> — this exact file has been processed "
+                    "before, so nothing was changed. A revised eOrder (a "
+                    "different file) will be read as an update. (To re-read "
+                    "identical files while testing, set ALLOW_DUPLICATE_FILES.)",
+                )
+            except Exception:  # noqa: BLE001 - the notice must never fail the skip
+                pass
+            return {**result, "ok": True, "skipped": "identical file already read"}
+        result["duplicate_reread"] = True
 
     previous = store.previous_parse(opportunity_id)
     changes = mapping.diff_against(previous, parsed) if previous else []
@@ -259,13 +308,19 @@ def _run(monday, store, payload, result, started):
     values, dropped = mapping.align_status_values(values, board_labels)
     warnings.extend(_dropped_warnings(dropped, cols))
 
-    # --- multi-site subitems (§8.4) ------------------------------------
+    # --- install items, one per site (§8.4 + finalisation Prompt 1) -----
+    #
+    # EVERY order with Install Required = Yes gets one install subitem per
+    # site — a single-site order gets exactly one, built from the main
+    # delivery block — so the portal, the SLA clock and any future SMS all
+    # start from the same object. Orders with no install (Change of
+    # Ownership, Service Only Renewal, customer self-install) get none.
     #
     # Contained: subitems live on their own board with their own column IDs,
     # so a value write monday refuses must cost the subitem's values, not the
     # order. Runs before the row write so a failure here still counts toward
     # the status stamped on the row.
-    sites = parsed.get("multi_site") or []
+    sites = mapping.install_sites(parsed)
     if sites:
         try:
             result["subitems"], subitem_notes = _sync_subitems(
@@ -361,7 +416,7 @@ def _resolve_item(monday, board_id, dropped_on_item_id, opportunity_id, cols):
 
 
 def _sync_subitems(monday, parent_id, sites, cols):
-    """One subitem per delivery site, each with its own SLA clock.
+    """One install item (subitem) per site, each with its own SLA clock.
 
     Subitems live on a separate board with its own column IDs, so the parent
     board's IDs are only valid there if the subitem board happens to mirror

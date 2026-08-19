@@ -1,8 +1,8 @@
 -- Navtek eOrder → monday automation
--- 0004_operations.sql — delivery dedup, notification ledger, installer state.
+-- 0005_operations.sql — delivery dedup, notification ledger, installer state.
 --
 -- Safe to run more than once, same as the others. Run it in the Supabase SQL
--- Editor after 0003_grants.sql.
+-- Editor after 0004_webhook_log.sql.
 
 -- ---------------------------------------------------------------------------
 -- Webhook delivery claims (FINALIZE prompt 7).
