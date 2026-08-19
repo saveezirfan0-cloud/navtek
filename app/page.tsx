@@ -1,27 +1,13 @@
 import Nav from "./Nav";
 import NoAccess from "./NoAccess";
 import AutoRefresh from "./AutoRefresh";
+import RecentTable from "./RecentTable";
 import { getHealth, getRecent } from "@/lib/api";
 import { requireViewer } from "@/lib/auth";
 
 export const metadata = { title: "Orders · Navtek" };
 
 export const dynamic = "force-dynamic";
-
-const PILL: Record<string, [string, string]> = {
-  read: ["p-read", "Read"],
-  check: ["p-check", "Check"],
-  failed: ["p-failed", "Failed"],
-};
-
-function when(iso: string) {
-  const d = new Date(iso);
-  const thisYear = d.getFullYear() === new Date().getFullYear();
-  return d.toLocaleString("en-AU", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-    ...(thisYear ? {} : { year: "numeric" }),
-  });
-}
 
 export default async function Dashboard() {
   // All three in flight together — the gate is checked when they land, and
@@ -139,50 +125,7 @@ export default async function Dashboard() {
               TN Orders and it will appear here.
             </p>
           ) : (
-            <div className="scroll-x">
-            <table>
-              <thead>
-                <tr>
-                  <th>Order</th>
-                  <th>Status</th>
-                  <th>Notes</th>
-                  <th>When</th>
-                  <th>Took</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => {
-                  const [cls, label] = PILL[r.status] ?? ["p-check", r.status];
-                  return (
-                    <tr key={i}>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>
-                          {r.item_name ?? r.file_name ?? "—"}
-                        </div>
-                        {r.opportunity_id && (
-                          <div className="mono" style={{ color: "var(--mid)" }}>
-                            {r.opportunity_id}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <span className={`pill ${cls}`}>{label}</span>
-                      </td>
-                      <td style={{ color: "var(--mid)" }}>
-                        {r.error ??
-                          [...r.changed_fields, ...r.warnings].slice(0, 3).join(" · ") ??
-                          ""}
-                      </td>
-                      <td className="num">{when(r.created_at)}</td>
-                      <td className="num">
-                        {r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            </div>
+            <RecentTable rows={rows} />
           )}
         </div>
         <div className="foot">

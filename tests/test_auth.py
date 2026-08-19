@@ -323,3 +323,22 @@ def test_an_admin_cannot_lock_themselves_out(monkeypatch):
             headers={"X-Session": data["token"]},
         )
         assert response.status_code == 400
+
+
+# -- the SLA sweep endpoint ---------------------------------------------------
+
+def test_the_sweep_needs_the_portal_secret_or_the_cron_secret(monkeypatch):
+    bare = TestClient(_module.app, raise_server_exceptions=False)
+    assert bare.post("/api/py/sla/sweep").status_code == 401
+
+    monkeypatch.setattr(_module.config, "CRON_SECRET", "cron-secret")
+    cron = TestClient(_module.app, raise_server_exceptions=False,
+                      headers={"Authorization": "Bearer cron-secret"})
+    response = cron.get("/api/py/sla/sweep")
+    # No SLA_GO_LIVE_DATE in tests → the sweep answers, and says it's off.
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False
+
+
+def test_the_activity_feed_is_admin_only():
+    assert client().get("/api/py/activity").status_code == 401

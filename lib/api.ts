@@ -252,6 +252,41 @@ export async function authMe(session: string): Promise<AuthUser | null> {
   }
 }
 
+// -- activity (admin) --------------------------------------------------------
+
+export type ActivityEvent = {
+  action: string;
+  monday_item_id: number;
+  installer_account_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export type UnknownReason = {
+  order_reason: string;
+  opportunity_id: string | null;
+  file_name: string | null;
+  seen_at: string;
+};
+
+export type SlaBreach = {
+  monday_item_id: number;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export async function getActivity(session: string): Promise<{
+  events: ActivityEvent[];
+  unknown_order_reasons: UnknownReason[];
+  sla_breaches: SlaBreach[];
+} | null> {
+  try {
+    return await call("/activity", { headers: { "X-Session": session } });
+  } catch {
+    return null;
+  }
+}
+
 // -- user management (admin) -----------------------------------------------
 
 export type InstallerAccountRef = { id: string; name: string; active: boolean };

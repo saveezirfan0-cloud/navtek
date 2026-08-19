@@ -136,6 +136,15 @@ class FakeStore:
         self.degraded = "simulated failure" if broken else None
         self.ingests = []
         self.unknown_reasons = []
+        self.claims = set()
+
+    def claim_delivery(self, key, ttl_minutes=60):
+        if self.broken:
+            return True  # fail open, like the real store
+        if key in self.claims:
+            return False
+        self.claims.add(key)
+        return True
 
     def already_ingested(self, opportunity_id, file_sha):
         if self.broken:
@@ -494,3 +503,133 @@ def test_events_for_another_board_are_turned_away():
     assert not result["ok"]
     assert "not the orders board" in result["reason"]
     assert monday.written == {} and monday.updates == [] and monday.downloads == 0
+
+
+# -- delivery-level dedup (FINALIZE prompt 7) ---------------------------------
+
+def test_the_same_delivery_twice_ingests_once():
+    """monday can fire one event more than once; file-level dedupe can't stop
+    two deliveries racing each other, so the delivery itself is claimed first."""
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    store = FakeStore()
+    payload = {"event": {"pulseId": 123, "boardId": BOARD_ID,
+                         "triggerUuid": "abc-123"}}
+
+    first = ingest.handle_webhook(payload, FakeMonday(blob(KANE)), store)
+    assert first["ok"] and not first.get("skipped")
+
+    monday2 = FakeMonday(blob(KANE))
+    second = ingest.handle_webhook(payload, monday2, store)
+    assert second["ok"]
+    assert "duplicate" in second["skipped"]
+    assert monday2.written == {} and monday2.downloads == 0
+
+
+def test_distinct_deliveries_are_not_confused():
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    store = FakeStore()
+    a = ingest.handle_webhook(
+        {"event": {"pulseId": 123, "boardId": BOARD_ID, "triggerUuid": "one"}},
+        FakeMonday(blob(KANE)), store)
+    b = ingest.handle_webhook(
+        {"event": {"pulseId": 123, "boardId": BOARD_ID, "triggerUuid": "two"}},
+        FakeMonday(blob(KANE)), store)
+    assert a["ok"] and not a.get("skipped")
+    # Same file → the FILE-level dedupe catches it, not the delivery gate.
+    assert b["ok"] and b.get("skipped") == "identical file already read"
+
+
+def test_the_delivery_gate_fails_open_when_the_database_is_down():
+    """An order landing twice is recoverable; an order not landing is not."""
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    monday = FakeMonday(blob(KANE))
+    result = ingest.handle_webhook(
+        {"event": {"pulseId": 123, "boardId": BOARD_ID, "triggerUuid": "x"}},
+        monday, FakeStore(broken=True))
+    assert result["ok"] and not result.get("skipped")
+    assert monday.written  # the order landed
+
+
+def test_transient_monday_failures_do_not_silently_strip_subitem_fields(monkeypatch):
+    """gql raises the same MondayError for exhausted rate limits as for
+    refused values. Retrying a transient failure bare would create the subitem
+    with no site fields — silently, forever, since existing subitems are never
+    revisited. Transients must surface as a warning instead."""
+    parsed = {
+        "opportunity_id": "006TESTTRANSIENT", "company": "QUALITYVEND",
+        "derived_item_name": "QUALITYVEND = 12 x AT551",
+        "order_reason": "Add-On", "order_date": "July 2, 2026",
+        "ship_to_type": "multiple", "install_required": "Yes",
+        "site_contact_name": "A Person", "site_contact_phone": "0400000000",
+        "multi_site": [{"company": "Site A", "qty": 4}],
+        "lines": [{"qty": 4, "product": "AT551 Asset Tracker Service"}],
+        "_warnings": [],
+    }
+
+    class StubParser:
+        ACV_ORDER_REASONS = ["New Business"]
+
+        @staticmethod
+        def parse(handle):
+            return dict(parsed)
+
+    class RateLimited(FakeMonday):
+        def create_subitem(self, parent, name, values=None):
+            raise MondayError("monday unavailable after 3 attempts: HTTP 429")
+
+    monkeypatch.setattr(ingest, "_parser", lambda: StubParser)
+    result, monday, _ = run(KANE, monday=RateLimited(blob(KANE)))
+    assert result["ok"]  # the order itself still lands
+    assert monday.subitems_created == []
+    assert any("could not create per-site subitems" in w
+               for w in result["warnings"])
+
+
+def test_a_value_refusal_on_subitems_is_reported_not_silent(monkeypatch):
+    """The bare retry is for refused values only — and it must say so."""
+    parsed = {
+        "opportunity_id": "006TESTREFUSED", "company": "QUALITYVEND",
+        "derived_item_name": "QUALITYVEND = 12 x AT551",
+        "order_reason": "Add-On", "order_date": "July 2, 2026",
+        "ship_to_type": "multiple", "install_required": "Yes",
+        "site_contact_name": "A Person", "site_contact_phone": "0400000000",
+        "multi_site": [{"company": "Site A", "qty": 4}],
+        "lines": [{"qty": 4, "product": "AT551 Asset Tracker Service"}],
+        "_warnings": [],
+    }
+
+    class StubParser:
+        ACV_ORDER_REASONS = ["New Business"]
+
+        @staticmethod
+        def parse(handle):
+            return dict(parsed)
+
+    monkeypatch.setattr(ingest, "_parser", lambda: StubParser)
+    result, monday, _ = run(KANE, monday=SubitemValuesRejected(blob(KANE)))
+    assert result["ok"]
+    assert monday.subitems_created == ["Site A — 4 units"]
+    assert any("without its site fields" in w for w in result["warnings"])
+
+
+def test_fail_with_no_failed_like_label_still_posts_the_update():
+    """A hand-made status column may have no label resembling Failed. The
+    status write is dropped by alignment, and the Update — the only feedback
+    channel left — must still post."""
+    class NoFailedLabel(FakeMonday):
+        def board_columns(self, board_id):
+            columns = [dict(c) for c in BOARD_COLUMNS]
+            for column in columns:
+                if column["id"] == "color_status":
+                    column["settings_str"] = json.dumps(
+                        {"labels": {"1": "Fine", "2": "Look at this"}})
+            return columns
+
+    monday = NoFailedLabel(b"this is not a spreadsheet")
+    result, monday, _ = run(KANE, monday=monday)
+    assert not result["ok"]
+    assert "color_status" not in monday.written   # dropped, not exploded
+    assert any("Could not read eOrder" in u for u in monday.updates)

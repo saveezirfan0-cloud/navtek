@@ -280,6 +280,20 @@ def validate(parsed, installer_match=None):
         warnings.append(
             f"ship-to is Multiple Addresses — {len(sites)} site(s) split to subitems"
         )
+        # Sites-sum-vs-total check that knows when to shut up (FINALIZE
+        # prompt 8): per-site quantities come from free-text notes and parse
+        # to None when unreadable. The check runs ONLY when every site parsed
+        # to a number — one unknown, or no sites at all, means silence, and a
+        # mismatch is a ⚠️ Check with the numbers, never a failure.
+        qtys = [site.get("qty") for site in sites]
+        total = units_total(parsed)
+        if sites and total and all(isinstance(q, (int, float)) for q in qtys):
+            site_sum = int(sum(qtys))
+            if site_sum != total:
+                warnings.append(
+                    f"site quantities add up to {site_sum} but the order has "
+                    f"{total} units — check the split"
+                )
 
     # classify_ship_to() returns one of: installer, third_party, customer,
     # nothing_to_ship, multiple, unknown. "unknown" means the ship-to cell was

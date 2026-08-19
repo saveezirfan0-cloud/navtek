@@ -444,3 +444,61 @@ def test_supabase_credentials_survive_pasted_whitespace_and_quotes(monkeypatch):
     candidates = config_mod.supabase_candidates()
     assert candidates[0]["url"] == "https://abcdefgh.supabase.co"
     assert candidates[0]["key"] == "sb_secret_real_value"
+
+
+# -- multi-site quantity check that knows when to shut up (prompt 8) ---------
+
+def _multi(sites):
+    return {**KANE, "ship_to_type": "multiple", "multi_site": sites}
+
+
+def test_matching_site_quantities_stay_silent():
+    # KANE's lines sum to 44 (commissions line excluded).
+    status, warnings = mapping.validate(_multi([{"qty": 40}, {"qty": 4}]))
+    assert not any("add up to" in w for w in warnings)
+
+
+def test_mismatched_site_quantities_flag_check_with_the_numbers():
+    status, warnings = mapping.validate(_multi([{"qty": 40}, {"qty": 3}]))
+    assert status == mapping.STATUS_CHECK
+    assert any("43" in w and "44" in w for w in warnings), warnings
+
+
+def test_one_unparseable_site_silences_the_check():
+    # site_qty() returns None — not 0 — when the free-text notes don't parse.
+    status, warnings = mapping.validate(_multi([{"qty": 40}, {"qty": None}]))
+    assert not any("add up to" in w for w in warnings)
+
+
+def test_single_site_orders_never_run_the_check():
+    status, warnings = mapping.validate(dict(KANE))
+    assert not any("add up to" in w for w in warnings)
+
+
+def test_customer_self_install_survives_alignment_exactly():
+    aligned, dropped = mapping.align_status_values(
+        {"s": {"label": "Customer self-install"}},
+        {"s": ["Yes", "No", "Customer self-install"]})
+    assert aligned == {"s": {"label": "Customer self-install"}}
+    assert dropped == []
+
+
+def test_a_two_part_jwt_is_named_signature_missing():
+    from _lib.store import Store
+    kind = Store("https://x.supabase.co", "eyJhbGciOi.payloadonly").key_kind()
+    assert "signature missing" in kind
+
+
+def test_diag_agrees_with_the_app_about_what_is_set():
+    import importlib.util
+    import os as _os
+    spec = importlib.util.spec_from_file_location(
+        "navtek_diag",
+        _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                      "api", "diag.py"))
+    diag = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(diag)
+    assert diag._actually_set("sb_secret_x") is True
+    assert diag._actually_set('""') is False      # quoted-empty paste
+    assert diag._actually_set("  ") is False      # whitespace-only paste
+    assert diag._actually_set(None) is False

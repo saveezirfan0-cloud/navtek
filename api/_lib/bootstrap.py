@@ -18,6 +18,9 @@ INSTALLER_COLUMNS = [
     ("coordinator_email", "Coordinator email", "email", None),
     ("portal_token", "Portal token", "text", None),
     ("region", "Region", "dropdown", None),
+    # Which state's public holidays govern this account's SLA clock (§6 / 
+    # FINALIZE prompt 6). Free text on purpose: NSW, VIC, QLD…
+    ("state", "State", "text", None),
     ("active", "Active", "checkbox", None),
 ]
 
@@ -165,13 +168,21 @@ def ensure_installer_board(monday):
     token_column = columns["portal_token"]
 
     if not items:
+        from .monday import MondayError
+
         for name, account_type in SEED_ACCOUNTS:
-            monday.create_item(board_id, group_id, name, {
-                columns["account_type"]: {"label": account_type},
-                token_column: secrets.token_urlsafe(32),
-                columns["active"]: {"checked": "true"},
-            })
-            log.append(f"seeded   {name}")
+            try:
+                monday.create_item(board_id, group_id, name, {
+                    columns["account_type"]: {"label": account_type},
+                    token_column: secrets.token_urlsafe(32),
+                    columns["active"]: {"checked": "true"},
+                })
+                log.append(f"seeded   {name}")
+            except MondayError as exc:
+                # An adopted board's Type column may carry different labels;
+                # one refused label must cost that seed row, not the whole
+                # setup step (the same containment the ingest applies).
+                log.append(f"skipped  {name}: {exc}")
     else:
         issued = 0
         for item in items:
@@ -253,6 +264,7 @@ def sync_installers(monday, store, installers_board_id=None):
             "coordinator_email": column(values, "Coordinator email"),
             "portal_token": token,
             "region": column(values, "Region"),
+            "state": (column(values, "State") or "NSW").strip().upper(),
             "active": active_raw in ("v", "true", "checked", "yes", "1"),
             "match_key": installers.match_key(item["name"]),
         })

@@ -154,6 +154,9 @@ GitHub replaces the placeholder. Click the file to confirm it now begins
    the tables. On most projects it is already true and the script changes
    nothing; on projects where it isn't, every key fails with "permission
    denied" until this runs.
+7. Repeat with `0004_operations.sql` — webhook dedup, the notification
+   ledger the SLA engine uses, and the per-account State column for
+   public-holiday-aware SLA clocks.
 
 You want **Success. No rows returned.** That is what a successful table
 creation looks like — it isn't an error.
@@ -232,6 +235,9 @@ left, value on the right, click **Add**.
 | `SETUP_KEY` | your first random string |
 | `WRITE_ORDER_TYPE` | `false` |
 | `WEBHOOK_SECRET` | *(optional but recommended)* a third random string. With it set, the monday webhook URL carries a token and the automation rejects anything else that posts to it. Set it before running Setup step 4 — or set it later and run step 4 again. |
+| `CRON_SECRET` | *(optional)* a random string. Vercel sends it with the daily SLA sweep so nothing else can trigger it. |
+| `SLA_GO_LIVE_DATE` | *(leave unset until go-live)* `YYYY-MM-DD`. Only jobs dispatched on or after this date ever enter the SLA sweep — everything older is backlog reconciled by hand. Unset = the sweep is off. |
+| `SLA_NOTIFICATIONS_ENABLED` | `false`. The sweep runs in shadow mode — recording breaches and logging what it *would* text — until this is explicitly `true`. Read a week of shadow output first. |
 
 Check for stray spaces at the start or end of each pasted value. That is the
 single most common cause of "it says my token is wrong".

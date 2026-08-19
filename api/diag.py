@@ -30,6 +30,20 @@ EXPECTED_LIB = [
 ]
 
 
+def _actually_set(value):
+    """Same judgement the app makes: whitespace or bare quotes are NOT set.
+
+    This module deliberately imports nothing from the app, so the one rule it
+    shares with config._clean_secret is duplicated here — env_present saying
+    "present" for a value the app treats as absent sends the debugger the
+    wrong way, which is the exact failure this endpoint exists to prevent.
+    """
+    value = (value or "").strip()
+    if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
+    return bool(value)
+
+
 def _packages():
     out = {}
     for name, why in REQUIRED.items():
@@ -124,7 +138,7 @@ class handler(BaseHTTPRequestHandler):
                     "SUPABASE_SERVICE_KEY_2",
                     "SETUP_KEY", "COLUMN_IDS", "ORDERS_BOARD_ID",
                     "INSTALLERS_BOARD_ID", "PORTAL_SHARED_SECRET",
-                ) if os.environ.get(k)
+                ) if _actually_set(os.environ.get(k))
             ),
         }
 

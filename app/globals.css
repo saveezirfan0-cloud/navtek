@@ -340,3 +340,16 @@ pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
 .ask-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .ask-row .btn { margin: 0; flex: 1 1 auto; }
 .b-plain { background: transparent; color: inherit; border: 1.5px solid #cdd7e1; }
+
+/* -- table tools: search, status chips, CSV export -------------------------- */
+.table-tools {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.chips { display: inline-flex; gap: 6px; }
+.chip-btn {
+  border: 1.5px solid #cdd7e1; border-radius: 999px; background: transparent;
+  font: inherit; font-size: 13px; font-weight: 650; padding: 4px 12px;
+  cursor: pointer; color: inherit;
+}
+.chip-btn.on { background: #102030; border-color: #102030; color: #fff; }

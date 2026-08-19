@@ -89,6 +89,16 @@ def handle_webhook(payload, monday=None, store=None):
 
     result = {"item_id": item_id, "board_id": board_id}
 
+    # Delivery-level dedup (FINALIZE prompt 7). File-level idempotency can't
+    # stop two deliveries of the SAME drop racing each other — both pass the
+    # already_ingested check before either records. Claiming the delivery's
+    # identity first serialises them; the loser reports success so monday
+    # doesn't retry. Fails open when the database can't answer.
+    delivery_key = _delivery_key(event)
+    if delivery_key and not store.claim_delivery(delivery_key):
+        return {**result, "ok": True,
+                "skipped": "duplicate webhook delivery — already being processed"}
+
     try:
         return _run(monday, store, payload, result, started)
     except Exception as exc:  # noqa: BLE001
@@ -99,6 +109,26 @@ def handle_webhook(payload, monday=None, store=None):
         _fail(monday, board_id, item_id,
               f"Something went wrong reading this eOrder.<br>{detail}")
         return {**result, "ok": False, "reason": detail}
+
+
+def _delivery_key(event):
+    """A stable identity for one webhook delivery, or None when there isn't one.
+
+    monday's retries of a delivery carry the same triggerUuid; distinct drops
+    get distinct ones. Older payload shapes without it fall back to hashing
+    the event's value (the file list) per item — still stable across retries.
+    No identity at all means no gate: fail open.
+    """
+    trigger = event.get("triggerUuid") or event.get("triggerId")
+    if trigger:
+        return f"trigger:{trigger}"
+    value = event.get("value")
+    if value is None:
+        return None
+    import json as _json
+
+    digest = sha256(_json.dumps(value, sort_keys=True, default=str).encode())[:24]
+    return f"{event.get('pulseId')}:{digest}"
 
 
 def _run(monday, store, payload, result, started):
@@ -238,7 +268,9 @@ def _run(monday, store, payload, result, started):
     sites = parsed.get("multi_site") or []
     if sites:
         try:
-            result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
+            result["subitems"], subitem_notes = _sync_subitems(
+                monday, target_id, sites, cols)
+            warnings.extend(subitem_notes)
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"could not create per-site subitems: {exc}")
 
@@ -338,7 +370,7 @@ def _sync_subitems(monday, parent_id, sites, cols):
     bonus.
     """
     existing = {s["name"]: s for s in monday.subitems(parent_id)}
-    written = []
+    written, notes = [], []
     for index, site in enumerate(sites, start=1):
         name = mapping.subitem_name(site, index)
         if name in existing:
@@ -346,10 +378,23 @@ def _sync_subitems(monday, parent_id, sites, cols):
         values = mapping.subitem_values(site, cols)
         try:
             created = monday.create_subitem(parent_id, name, values)
-        except MondayError:
+        except MondayError as exc:
+            # Only a REFUSAL of the values warrants the bare retry. gql raises
+            # the same exception type for exhausted rate limits ("monday
+            # unavailable after N attempts") — retrying that bare would
+            # silently strip site fields that were perfectly writable, and
+            # since existing subitems are never revisited, a re-drop would
+            # not backfill them. Transient failures propagate to the outer
+            # guard, which reports them.
+            if "unavailable after" in str(exc):
+                raise
             created = monday.create_subitem(parent_id, name, {})
+            notes.append(
+                f"subitem '{name}' was created without its site fields — "
+                f"monday refused them: {exc}"
+            )
         written.append({"id": created["id"], "name": name})
-    return written
+    return written, notes
 
 
 def _fail(monday, board_id, item_id, message, cols=None):

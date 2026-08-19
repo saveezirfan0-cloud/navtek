@@ -13,11 +13,14 @@ from datetime import date, datetime, timedelta
 
 from . import columns as columns_mod
 from . import config, mapping
+from .holidays_au import is_business_day
 
 SLA_BUSINESS_DAYS = 2
 
 
-def business_days_since(when):
+def business_days_since(when, state="NSW", today=None):
+    """Business days elapsed, skipping weekends AND that state's public
+    holidays — a coordinator must not be chased on Melbourne Cup Day."""
     if not when:
         return None
     if isinstance(when, str):
@@ -28,10 +31,10 @@ def business_days_since(when):
     if isinstance(when, datetime):
         when = when.date()
     days, cursor = 0, when
-    today = date.today()
+    today = today or date.today()
     while cursor < today:
         cursor += timedelta(days=1)
-        if cursor.weekday() < 5:
+        if is_business_day(cursor, state):
             days += 1
     return days
 
@@ -83,7 +86,8 @@ def jobs_for_account(monday, store, account, record_view=True):
                 },
             )
             items = (raw.get("items_page_by_column_values") or {}).get("items") or []
-            jobs = [_shape(item, cols) for item in items]
+            state = account.get("state") or "NSW"
+            jobs = [_shape(item, cols, state) for item in items]
             store.cache_jobs([
                 {"monday_item_id": job["item_id"], "data": job,
                  "installer_account_id": account["id"]}
@@ -115,7 +119,7 @@ def jobs_for_account(monday, store, account, record_view=True):
     }
 
 
-def _shape(item, cols=None):
+def _shape(item, cols=None, account_state="NSW"):
     """One monday item → the fields the portal card renders."""
     cols = cols or config.COLUMNS
     values = {c["id"]: c for c in item.get("column_values", [])}
@@ -155,7 +159,7 @@ def _shape(item, cols=None):
         "units_total": units_total,
         "units_installed": units_installed or 0,
         "state": state,
-        "overdue_days": business_days_since(dispatched) if not contacted else None,
+        "overdue_days": business_days_since(dispatched, account_state) if not contacted else None,
         # Only show the progress counter on genuinely multi-unit jobs (§6.4).
         "show_counter": bool(units_total and units_total > 1),
     }

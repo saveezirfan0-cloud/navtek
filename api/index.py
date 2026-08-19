@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 
-from _lib import bootstrap, columns as columns_mod, config, portal, users  # noqa: E402
+from _lib import bootstrap, columns as columns_mod, config, portal, sla, users  # noqa: E402
 from _lib.ingest import handle_webhook  # noqa: E402
 from _lib.monday import Monday, MondayError  # noqa: E402
 from _lib.store import Store  # noqa: E402
@@ -713,6 +713,55 @@ def setup_webhook(body: dict = Body(default={}), x_setup_key: str = Header(defau
         return bootstrap.register_webhook(Monday(), f"{url}/api/py/eorder")
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+# --------------------------------------------------------------------------
+# SLA sweep (FINALIZE prompt 2) — called daily by a Vercel cron, in shadow
+# mode until SLA_NOTIFICATIONS_ENABLED is explicitly true.
+# --------------------------------------------------------------------------
+
+def _cron_or_portal(request, secret):
+    """Vercel crons authenticate with `Authorization: Bearer $CRON_SECRET`;
+    everything else needs the portal shared secret."""
+    import hmac as _hmac
+
+    auth = request.headers.get("authorization", "")
+    if config.CRON_SECRET and _hmac.compare_digest(
+        auth, f"Bearer {config.CRON_SECRET}"
+    ):
+        return
+    _authorise(secret)
+
+
+@app.get("/api/py/sla/sweep")
+@app.post("/api/py/sla/sweep")
+def sla_sweep(request: Request, x_portal_secret: str = Header(default="")):
+    """Compute SLA breaches across every active installer account.
+
+    Respects the SLA_GO_LIVE_DATE cutoff absolutely, records each breach once
+    ever in the notifications ledger, and — until SLA_NOTIFICATIONS_ENABLED —
+    only logs what it would send.
+    """
+    _cron_or_portal(request, x_portal_secret)
+    return sla.sweep(Monday(), Store())
+
+
+@app.get("/api/py/activity")
+def activity(
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """The audit trail, for admins: portal events (views, write-backs, failed
+    logins, SLA breaches) and unrecognised order reasons. The data was always
+    collected; this is the first window onto it."""
+    _authorise(x_portal_secret)
+    store = Store()
+    _require_admin(_session_user(store, x_session))
+    return {
+        "events": store.recent_events(150),
+        "unknown_order_reasons": store.recent_unknown_reasons(50),
+        "sla_breaches": store.notifications_of_kind("sla_breach", 50),
+    }
 
 
 @app.get("/api/py/selftest")

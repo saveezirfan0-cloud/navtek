@@ -32,7 +32,8 @@ export default function Nav({
     links.push(["/portal", "My jobs"]);
   }
   if (user.is_admin) {
-    links.push(["/installers", "Installers"], ["/users", "Users"], ["/setup", "Setup"]);
+    links.push(["/installers", "Installers"], ["/users", "Users"],
+               ["/activity", "Activity"], ["/setup", "Setup"]);
   }
   return (
     <>

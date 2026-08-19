@@ -16,7 +16,7 @@ import os
 # Bumped with every packaged build. Shown on /health and the dashboard so
 # "which build is actually live" is a fact you can read, not a guess — an
 # ambiguity that has cost real debugging time in this project.
-APP_VERSION = "2026-08-19.6"
+APP_VERSION = "2026-08-19.7"
 
 
 def _clean_secret(value):
@@ -222,6 +222,21 @@ COLUMNS = _load_columns()
 # Rental vs Outright comes from — a wrong value here is worse than a blank one,
 # because a blank prompts someone to fill it in and a wrong one does not.
 WRITE_ORDER_TYPE = os.environ.get("WRITE_ORDER_TYPE", "false").lower() == "true"
+
+# --- SLA engine (FINALIZE prompt 2) ---
+#
+# Only jobs dispatched on or after the go-live date enter the SLA engine —
+# everything older is backlog reconciled by hand. Unset means the sweep is off.
+SLA_GO_LIVE_DATE = _clean_secret(os.environ.get("SLA_GO_LIVE_DATE", ""))
+SLA_BUSINESS_DAYS = int(os.environ.get("SLA_BUSINESS_DAYS", "2"))
+# The sweep runs in shadow mode (record + log, send nothing) until this is
+# explicitly true. Read a week of shadow output before flipping it.
+SLA_NOTIFICATIONS_ENABLED = (
+    os.environ.get("SLA_NOTIFICATIONS_ENABLED", "false").lower() == "true"
+)
+# Vercel cron authentication: when set, Vercel sends it as a Bearer token and
+# the sweep endpoint accepts it in place of the portal secret.
+CRON_SECRET = _clean_secret(os.environ.get("CRON_SECRET", ""))
 
 # Fuzzy-match threshold for ship-to → Installer Account. Below this we write
 # nothing and flag Check rather than guessing (brief §6.2).
