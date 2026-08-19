@@ -21,8 +21,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import Body, FastAPI, Header, HTTPException, Query, Request  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi import Body, Cookie, FastAPI, Header, HTTPException, Query, Request  # noqa: E402
+from fastapi.responses import JSONResponse, RedirectResponse  # noqa: E402
 
 from _lib import bootstrap, columns as columns_mod, config, portal, users  # noqa: E402
 from _lib.ingest import handle_webhook  # noqa: E402
@@ -77,6 +77,7 @@ def health():
         "orders_board": config.ORDERS_BOARD_ID,
         "installers_board": config.INSTALLERS_BOARD_ID,
         "write_order_type": config.WRITE_ORDER_TYPE,
+        "allow_duplicate_files": config.ALLOW_DUPLICATE_FILES,
     }
 
 
@@ -703,6 +704,7 @@ def recent(limit: int = Query(default=20)):
         "enabled": True,
         "ingests": [
             {
+                "monday_item_id": r.get("monday_item_id"),
                 "opportunity_id": r.get("opportunity_id"),
                 "file_name": r.get("file_name"),
                 "status": r.get("status"),
@@ -730,6 +732,39 @@ def recent(limit: int = Query(default=20)):
             for h in hooks
         ],
     }
+
+
+@app.get("/api/py/eorder/file")
+def eorder_file(
+    item_id: int = Query(...),
+    navtek_session: str = Cookie(default=""),
+):
+    """Download the eOrder file sitting on a monday row.
+
+    Browser-navigated (a plain link on the dashboard), so it authenticates
+    with the session COOKIE directly rather than the X-Session header the
+    server-to-server routes use — the httpOnly cookie rides along on any
+    same-origin navigation. Orders access required: the raw eOrder carries
+    dealer commission and contract value, so this is a STAFF door — never
+    link it from the installer portal, whose users must not see commercials.
+
+    monday asset URLs expire after ~1h, so the fresh URL is fetched per click
+    and answered as a redirect — nothing is stored (brief §3.2/§6.3).
+    """
+    store = Store()
+    user = _session_user(store, navtek_session)
+    if not (user.get("can_orders") or user.get("is_admin")):
+        raise HTTPException(403, "This login doesn't have Orders access.")
+
+    monday = Monday()
+    cols = columns_mod.resolved(monday)
+    file_column = cols.get("eorder_file")
+    if not file_column:
+        raise HTTPException(404, "No eOrder file column is mapped on the board.")
+    assets = monday.asset_urls(item_id, file_column)
+    if not assets:
+        raise HTTPException(404, "No file on this row's eOrder column.")
+    return RedirectResponse(assets[-1]["public_url"])
 
 
 @app.get("/api/py/installers")

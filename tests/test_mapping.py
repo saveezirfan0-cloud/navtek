@@ -219,6 +219,52 @@ def test_ship_to_blank_is_flagged_once_despite_different_wordings():
     assert sum("ship-to" in w and "blank" in w for w in warnings) == 1
 
 
+def test_install_sites_is_uniform_across_order_shapes():
+    # Single-site install order → exactly one site, from the main delivery block.
+    sites = mapping.install_sites(KANE)
+    assert len(sites) == 1
+    assert sites[0]["company"] == "FFT TECHNOLOGY"
+    assert sites[0]["contact"] == "Gerard Cahalan"
+    assert sites[0]["phone_e164"] == "+61437353834"
+    assert sites[0]["qty"] == 44          # commissions line excluded
+    assert sites[0]["dispatch"] == "July 2, 2026"
+
+    # Multi-site order → its site rows, untouched.
+    multi = {**KANE, "ship_to_type": "multiple",
+             "multi_site": [{"company": "A", "qty": 4}, {"company": "B", "qty": 8}]}
+    assert mapping.install_sites(multi) == multi["multi_site"]
+
+    # No install → no install items, whatever the wording.
+    assert mapping.install_sites({**KANE, "install_required": "No"}) == []
+    assert mapping.install_sites({**KANE, "install_required": "Customer self-install"}) == []
+    assert mapping.install_sites({**KANE, "install_required": None}) == []
+
+
+def test_portal_yields_one_job_per_install_item_uniformly():
+    class StubMonday:
+        def __init__(self, subs):
+            self._subs = subs
+
+        def subitems(self, item_id):
+            return self._subs
+
+    order = {"id": "9", "name": "KANE CIVIL = 18 x RE400", "column_values": []}
+
+    # No subitems (pre-Prompt-1 order): the row stands in as the install item.
+    jobs = portal.install_items(StubMonday([]), order, {})
+    assert len(jobs) == 1
+    assert jobs[0]["install_id"] == "9" and jobs[0]["subitem_id"] is None
+
+    # With subitems: one job per site, none synthesized on top — and a bare
+    # subitem's unit count is recovered from the name the ingest gave it.
+    subs = [{"id": "91", "name": "FFT Technology — 8 units", "column_values": []},
+            {"id": "92", "name": "GPS Tech — 7 units", "column_values": []}]
+    jobs = portal.install_items(StubMonday(subs), order, {})
+    assert [j["install_id"] for j in jobs] == ["91", "92"]
+    assert [j["units_total"] for j in jobs] == [8, 7]
+    assert all(j["item_id"] == "9" for j in jobs)   # write-backs target the order
+
+
 def test_multi_site_split_is_flagged_once_when_the_parser_already_said_so():
     multi = {
         **KANE, "ship_to_type": "multiple",

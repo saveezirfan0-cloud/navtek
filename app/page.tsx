@@ -107,6 +107,10 @@ export default async function Dashboard() {
               <div className="v">{health?.write_order_type ? "On" : "Off"}</div>
               <div className="k">Writing Order Type</div>
             </div>
+            <div className="stat">
+              <div className="v">{health?.allow_duplicate_files ? "On" : "Off"}</div>
+              <div className="k">Duplicate re-reads (testing)</div>
+            </div>
           </div>
         </div>
 
@@ -158,6 +162,16 @@ export default async function Dashboard() {
                           <div className="mono" style={{ color: "var(--mid)" }}>
                             {r.opportunity_id}
                           </div>
+                        )}
+                        {r.monday_item_id && (
+                          <a
+                            href={`/api/py/eorder/file?item_id=${r.monday_item_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ fontSize: 13 }}
+                          >
+                            📄 eOrder file
+                          </a>
                         )}
                       </td>
                       <td>

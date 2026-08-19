@@ -48,6 +48,12 @@ async function call(path: string, init: RequestInit = {}) {
 
 export type Job = {
   item_id: string;
+  /** The install item's own id — the subitem when the order has one per site,
+   * the order row itself for orders that predate universal install items. */
+  install_id?: string;
+  subitem_id?: string | null;
+  /** The install item's name, e.g. "GPS Tech — 7 units", when it's a subitem. */
+  site?: string | null;
   name: string;
   customer: string;
   site_contact: string | null;
@@ -93,6 +99,7 @@ export async function postAction(input: {
 // -- dashboard -------------------------------------------------------------
 
 export type Ingest = {
+  monday_item_id: number | null;
   opportunity_id: string | null;
   file_name: string | null;
   status: "read" | "check" | "failed";
@@ -113,6 +120,7 @@ export type Health = {
   unmapped_optional?: string[];
   orders_board: number;
   write_order_type: boolean;
+  allow_duplicate_files?: boolean;
 };
 
 export async function getHealth(): Promise<Health | null> {

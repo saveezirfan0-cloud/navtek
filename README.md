@@ -167,6 +167,17 @@ revised eOrder may correct fields, and says what it changed in the Update.
 and entering the total does not auto-complete the job — fitting the last unit
 and finishing the job are different events (§6.4).
 
+**Every install order gets install items — one subitem per site.** A
+single-site order gets exactly one, built from the main delivery block, so the
+portal, the SLA clock and any future SMS all start from one uniform object
+(finalisation Prompt 1). Orders with Install Required = No get none.
+
+**Duplicate files are skipped loudly, and re-readable for testing.** A
+re-dropped identical file posts an "Already read" Update instead of vanishing,
+every webhook delivery lands in the dashboard's webhook log, and
+`ALLOW_DUPLICATE_FILES=true` (testing only) re-processes duplicates — still
+without clobbering existing monday values.
+
 ---
 
 ## Still open

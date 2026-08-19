@@ -40,6 +40,7 @@ export default function JobCard({ job, token }: { job: Job; token?: string }) {
     <details className="card">
       <summary>
         <div className="cust">{job.customer}</div>
+        {job.site && <div className="loc">{job.site}</div>}
         {job.site_address && <div className="loc">{job.site_address}</div>}
         {units && <div className="kit">{units}</div>}
         <div className="meta">

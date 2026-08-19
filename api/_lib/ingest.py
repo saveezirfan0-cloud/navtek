@@ -199,17 +199,23 @@ def _run(monday, store, payload, result, started):
     # file (monday doesn't retry a 200), and to them a silent skip looks
     # exactly like the automation being broken — the run shows Success in
     # monday's log and nothing changes on the row.
+    #
+    # ALLOW_DUPLICATE_FILES=true (testing) processes the duplicate instead —
+    # existing monday values are still protected by merge_preserving below.
     if store.already_ingested(opportunity_id, file_sha):
-        try:
-            monday.post_update(
-                item_id,
-                "ℹ️ <b>Already read</b> — this exact file has been processed "
-                "before, so nothing was changed. A revised eOrder (a different "
-                "file) will be read as an update.",
-            )
-        except Exception:  # noqa: BLE001 - the notice must never fail the skip
-            pass
-        return {**result, "ok": True, "skipped": "identical file already read"}
+        if not config.ALLOW_DUPLICATE_FILES:
+            try:
+                monday.post_update(
+                    item_id,
+                    "ℹ️ <b>Already read</b> — this exact file has been processed "
+                    "before, so nothing was changed. A revised eOrder (a "
+                    "different file) will be read as an update. (To re-read "
+                    "identical files while testing, set ALLOW_DUPLICATE_FILES.)",
+                )
+            except Exception:  # noqa: BLE001 - the notice must never fail the skip
+                pass
+            return {**result, "ok": True, "skipped": "identical file already read"}
+        result["duplicate_reread"] = True
 
     previous = store.previous_parse(opportunity_id)
     changes = mapping.diff_against(previous, parsed) if previous else []
@@ -264,13 +270,19 @@ def _run(monday, store, payload, result, started):
     values, dropped = mapping.align_status_values(values, board_labels)
     warnings.extend(_dropped_warnings(dropped, cols))
 
-    # --- multi-site subitems (§8.4) ------------------------------------
+    # --- install items, one per site (§8.4 + finalisation Prompt 1) -----
+    #
+    # EVERY order with Install Required = Yes gets one install subitem per
+    # site — a single-site order gets exactly one, built from the main
+    # delivery block — so the portal, the SLA clock and any future SMS all
+    # start from the same object. Orders with no install (Change of
+    # Ownership, Service Only Renewal, customer self-install) get none.
     #
     # Contained: subitems live on their own board with their own column IDs,
     # so a value write monday refuses must cost the subitem's values, not the
     # order. Runs before the row write so a failure here still counts toward
     # the status stamped on the row.
-    sites = parsed.get("multi_site") or []
+    sites = mapping.install_sites(parsed)
     if sites:
         try:
             result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
@@ -360,7 +372,7 @@ def _resolve_item(monday, board_id, dropped_on_item_id, opportunity_id, cols):
 
 
 def _sync_subitems(monday, parent_id, sites, cols):
-    """One subitem per delivery site, each with its own SLA clock.
+    """One install item (subitem) per site, each with its own SLA clock.
 
     Subitems live on a separate board with its own column IDs, so the parent
     board's IDs are only valid there if the subitem board happens to mirror

@@ -57,12 +57,12 @@ export default async function Portal({
 
       {action_needed.length > 0 && <div className="sect">Action needed</div>}
       {action_needed.map((job) => (
-        <JobCard key={job.item_id} job={job} token={token} />
+        <JobCard key={job.install_id ?? job.item_id} job={job} token={token} />
       ))}
 
       {waiting.length > 0 && <div className="sect">Waiting on hardware</div>}
       {waiting.map((job) => (
-        <JobCard key={job.item_id} job={job} token={token} />
+        <JobCard key={job.install_id ?? job.item_id} job={job} token={token} />
       ))}
 
       {total === 0 && waiting.length === 0 && (

@@ -271,6 +271,32 @@ def test_orders_with_nothing_to_ship_read_clean(sample):
     assert result["ok"]
     assert result["status"] == "✅ Read", result["warnings"]
     assert monday.written["color_install"] == {"label": "No"}
+    # Install Required = No → no install items (Prompt 1).
+    assert monday.subitems_created == []
+
+
+# -- Prompt 1: every install order gets one install item per site ------------
+
+def test_single_site_install_order_gets_exactly_one_install_item():
+    result, monday, _ = run(KANE)
+    assert result["ok"]
+    # One site, one install item — named ship-to + units like a multi-site row.
+    assert monday.subitems_created == ["FFT TECHNOLOGY — 44 units"]
+
+
+# -- ALLOW_DUPLICATE_FILES: the testing escape hatch --------------------------
+
+def test_duplicate_files_are_reprocessed_when_the_flag_is_on(monkeypatch):
+    monkeypatch.setattr(config, "ALLOW_DUPLICATE_FILES", True)
+    store = FakeStore()
+    run(KANE, store=store)
+
+    second, monday2, _ = run(KANE, store=store)
+    assert second["ok"] and not second.get("skipped")
+    assert second["duplicate_reread"] is True
+    # It really re-ran — fields written, no "Already read" brush-off.
+    assert monday2.written["text_contact"] == "Gerard Cahalan"
+    assert not any("Already read" in u for u in monday2.updates)
 
 
 # -- ACV only on new-revenue reasons (§4.1) ---------------------------------
