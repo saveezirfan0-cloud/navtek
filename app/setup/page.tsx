@@ -1,13 +1,25 @@
 import Nav from "../Nav";
+import NoAccess from "../NoAccess";
 import SetupSteps from "./SetupSteps";
+import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export default function SetupPage() {
+export default async function SetupPage() {
+  const user = await requireUser();
+  if (!user.is_admin) {
+    return (
+      <>
+        <Nav current="/setup" user={user} />
+        <NoAccess user={user} need="Admin" />
+      </>
+    );
+  }
+
   const configured = Boolean(process.env.SETUP_KEY);
   return (
     <>
-      <Nav current="/setup" />
+      <Nav current="/setup" user={user} />
       <div className="admin">
         <div className="head">
           <h1>Setup</h1>

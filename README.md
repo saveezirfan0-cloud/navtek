@@ -88,14 +88,31 @@ the contract is what to check first if output looks thin.
 
 | | |
 |---|---|
-| `/` | Dashboard — every eOrder read, with status and timing |
-| `/setup` | Board setup, seven steps. Gated on `SETUP_KEY`. |
-| `/installers` | Accounts and their portal links |
-| `/try` | Drop an eOrder in, see what the parser reads. Writes nothing. |
-| `/j/[token]` | The installer portal |
+| `/login` | Sign in. First visit ever offers to create the first admin (needs `SETUP_KEY`). |
+| `/` | Dashboard — every eOrder read, with status and timing. Needs **Orders** access. |
+| `/try` | Drop an eOrder in, see what the parser reads. Writes nothing. Needs **Orders** access. |
+| `/portal` | The installer portal for a **logged-in** installer user — their linked account's jobs. |
+| `/users` | Who can sign in and what each login sees. Admin only. |
+| `/setup` | Board setup. Admin only, plus `SETUP_KEY` for the board-changing steps. |
+| `/installers` | Accounts and their magic links. Admin only. |
+| `/j/[token]` | The installer portal via magic link — no login, the link is the password |
 | `/api/py/eorder` | monday webhook |
 | `/api/py/parse` | xlsx in, JSON out. No monday, no database. |
 | `/api/py/health` | What's configured and what isn't |
+
+### Logins and access
+
+Two switches per user, flipped by an admin on `/users`: **Orders** (dashboard +
+file tester) and **Installer** (the portal, which also needs the login linked
+to exactly one installer account — the server scopes every job list and
+write-back to that account). Admins see everything, manage users, and cannot
+remove their own admin access or deactivate themselves.
+
+Sessions are opaque tokens in an httpOnly cookie; the database stores only
+their SHA-256, passwords only as PBKDF2 hashes (`supabase/migrations/
+0002_users.sql`). Deactivating a user signs them out everywhere on their next
+click. Magic links (`/j/[token]`) are unchanged and independent — an installer
+can hold a link, a login, or both.
 
 `/parse` is deliberately dependency-free — it is how you check a file without
 writing anything anywhere, and what Make would call if the flow ever moves

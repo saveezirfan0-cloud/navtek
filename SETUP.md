@@ -149,13 +149,14 @@ GitHub replaces the placeholder. Click the file to confirm it now begins
    `supabase` → `migrations` → `0001_init.sql`
 3. Click the **copy icon** at the top right of the file
 4. Paste into the SQL editor and click **Run**
+5. Repeat with `0002_users.sql` — that one creates the login tables
 
 You want **Success. No rows returned.** That is what a successful table
 creation looks like — it isn't an error.
 
-Confirm it: click **Table Editor**. You should see five tables —
+Confirm it: click **Table Editor**. You should see seven tables —
 `installer_accounts`, `eorder_ingests`, `portal_events`, `jobs_cache`,
-`unknown_order_reasons`.
+`unknown_order_reasons`, `app_users`, `app_sessions`.
 
 ### 3.3 Copy two values
 
@@ -239,8 +240,36 @@ Copy the address at the top when it finishes — something like
 
 ### 5.5 Check it worked
 
-Open your app address. You should get the **Orders** page, with a yellow bar
-saying setup isn't finished. That bar is correct at this stage.
+Open your app address. You should land on the **sign-in page**, offering to
+create the first admin — that's correct, do that next (Part 5½). If it warns
+that the database isn't connected, a variable in 5.3 didn't save.
+
+### Part 5½ — Sign in
+
+The app is behind a login. The **first person to open it creates the first
+admin account** — it asks for a name, an email, a password of at least 10
+characters, and the **SETUP_KEY** (proof you're the person who deployed this,
+not just someone who found the address).
+
+After that, nobody else can register themselves. You add everyone on the
+**Users** page:
+
+- **Orders** access — sees the Orders dashboard and the file tester. This is
+  for your staff.
+- **Installer** access — sees the installer portal. Link the login to an
+  installer account on the same row, and that login sees exactly that
+  account's jobs, nothing else.
+- **Admin** — everything, including this Users page and Setup.
+
+Give each new user their starting password directly; any admin can reset it
+later on the same page. Switching someone off signs them out everywhere,
+immediately.
+
+The magic links from Part 7 still work and don't need a login — an installer
+can have a link, a login, or both.
+
+Then open **Orders**. You should see a yellow bar saying setup isn't
+finished. That bar is correct at this stage.
 
 If you want the detail, open `/api/py/health` on the end of your address:
 
@@ -415,6 +444,10 @@ long it took.
 
 | What you see | What it means |
 |---|---|
+| Sign-in page says the database isn't connected | The Supabase variables from 5.3 didn't save, or `0002_users.sql` hasn't been run (3.2). |
+| "Create the first admin" won't accept the key | It wants `SETUP_KEY` exactly as set in Vercel — check for stray spaces. |
+| Someone sees "This page isn't switched on for you" | An admin needs to enable Orders or Installer for them on the **Users** page. |
+| An installer login shows "No installer account linked" | On **Users**, pick their account in the Installer account column. |
 | Yellow bar saying setup isn't finished | Work through Part 6. It disappears on its own. |
 | Setup page says SETUP_KEY isn't set | You added it but didn't redeploy. Deployments → ⋯ → Redeploy. |
 | `missing_secrets` on `/api/py/health` | A variable didn't save, or has a space in it. Fix, then redeploy. |

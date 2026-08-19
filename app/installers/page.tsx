@@ -1,14 +1,26 @@
 import Nav from "../Nav";
+import NoAccess from "../NoAccess";
 import { getInstallers } from "@/lib/api";
+import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function InstallersPage() {
+  const user = await requireUser();
+  if (!user.is_admin) {
+    return (
+      <>
+        <Nav current="/installers" user={user} />
+        <NoAccess user={user} need="Admin" />
+      </>
+    );
+  }
+
   const { accounts } = await getInstallers();
 
   return (
     <>
-      <Nav current="/installers" />
+      <Nav current="/installers" user={user} />
       <div className="admin">
         <div className="head">
           <h1>Installers</h1>
