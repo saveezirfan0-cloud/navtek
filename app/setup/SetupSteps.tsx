@@ -5,6 +5,23 @@ import { runStep, type Result } from "./actions";
 
 type StepKey = "plan" | "columns" | "installers" | "env" | "sync" | "webhook" | "selftest";
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      className="act ghost"
+      style={{ marginTop: 12 }}
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+    >
+      {copied ? "Copied ✓" : "Copy"}
+    </button>
+  );
+}
+
 function Output({ result }: { result: Result | "running" | null }) {
   if (!result) return null;
   if (result === "running") return <pre className="out">Working…</pre>;
@@ -25,15 +42,7 @@ function Output({ result }: { result: Result | "running" | null }) {
 
   return (
     <>
-      {copyable && (
-        <button
-          className="act ghost"
-          style={{ marginTop: 12 }}
-          onClick={() => navigator.clipboard.writeText(copyable)}
-        >
-          Copy
-        </button>
-      )}
+      {copyable && <CopyButton text={copyable} />}
       <pre className="out ok">
         {log ? log.join("\n") + "\n\n" : ""}
         {JSON.stringify(rest, null, 2)}

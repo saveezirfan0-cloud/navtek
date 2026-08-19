@@ -1,21 +1,35 @@
 import Link from "next/link";
-import { getMyJobs } from "@/lib/api";
-import { requireUser, sessionToken } from "@/lib/auth";
+import { getMyJobs, getPreviewJobs } from "@/lib/api";
+import { requireViewer, sessionToken } from "@/lib/auth";
 import JobCard from "@/app/jobs/JobCard";
 import Staleness from "@/app/jobs/Staleness";
 import { signOut } from "@/app/login/actions";
+import { stopPreviewAction } from "@/app/users/actions";
+
+export const metadata = { title: "My jobs · Navtek" };
 
 export const dynamic = "force-dynamic";
 
 /** The installer portal for someone with a login — same cards, same actions
  * as the magic-link portal, scoped server side to the ONE installer account
- * their user record is linked to. */
+ * their user record is linked to. An admin previewing another login sees the
+ * same page for THAT login's account, read-only. */
 export default async function MyJobs() {
-  const user = await requireUser();
+  const { user, previewing } = await requireViewer();
+
+  const exitPreview = previewing && (
+    <div className="preview-bar">
+      <span>👁 Previewing as <b>{user.name}</b></span>
+      <form action={stopPreviewAction}>
+        <button className="preview-exit" type="submit">Exit preview</button>
+      </form>
+    </div>
+  );
 
   if (!user.can_installer && !user.is_admin) {
     return (
       <div className="wrap">
+        {exitPreview}
         <div className="notice">
           <h2>No installer access</h2>
           <p>
@@ -33,11 +47,16 @@ export default async function MyJobs() {
   }
 
   const session = await sessionToken();
-  const data = session ? await getMyJobs(session) : null;
+  const data = session
+    ? previewing
+      ? await getPreviewJobs(session, user.id)   // the TARGET's account, read-only
+      : await getMyJobs(session)
+    : null;
 
   if (!data) {
     return (
       <div className="wrap">
+        {exitPreview}
         <div className="notice">
           <h2>No installer account linked</h2>
           <p>
@@ -54,6 +73,17 @@ export default async function MyJobs() {
 
   return (
     <div className="wrap">
+      {previewing && (
+        <div className="preview-bar">
+          <span>
+            👁 Previewing as <b>{user.name}</b> — {account.name}&rsquo;s jobs,
+            read-only.
+          </span>
+          <form action={stopPreviewAction}>
+            <button className="preview-exit" type="submit">Exit preview</button>
+          </form>
+        </div>
+      )}
       <header>
         <div className="brand">{account.name} · Navtek installs</div>
         <div className="who">{user.name}</div>
@@ -79,12 +109,12 @@ export default async function MyJobs() {
 
       {action_needed.length > 0 && <div className="sect">Action needed</div>}
       {action_needed.map((job) => (
-        <JobCard key={job.item_id} job={job} />
+        <JobCard key={job.item_id} job={job} readOnly={previewing} />
       ))}
 
       {waiting.length > 0 && <div className="sect">Waiting on hardware</div>}
       {waiting.map((job) => (
-        <JobCard key={job.item_id} job={job} />
+        <JobCard key={job.item_id} job={job} readOnly={previewing} />
       ))}
 
       {total === 0 && waiting.length === 0 && (

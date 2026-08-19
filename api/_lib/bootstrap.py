@@ -281,6 +281,11 @@ def eorder_column_id(monday, board_id=None):
 
 def register_webhook(monday, url, board_id=None, file_column_id=None):
     board_id = board_id or config.ORDERS_BOARD_ID
+    # With WEBHOOK_SECRET set, the registration carries it and /eorder rejects
+    # deliveries without it. Registered here so setup step 4 is the only thing
+    # to re-run after setting the variable.
+    if config.WEBHOOK_SECRET and "hook=" not in url:
+        url = f"{url}?hook={config.WEBHOOK_SECRET}"
     column_id = file_column_id or eorder_column_id(monday, board_id)
     if not column_id:
         raise ValueError(
@@ -323,11 +328,14 @@ def register_flow_webhooks(monday, base_url, board_id=None):
     base = base_url.rstrip("/")
     cols = resolved(monday, board_id, force=True)
 
+    # Same ?hook= hardening as register_webhook — every one of these endpoints
+    # is reachable from the open internet and drives monday writes.
+    suffix = f"?hook={config.WEBHOOK_SECRET}" if config.WEBHOOK_SECRET else ""
     wanted = [
-        ("eorder_file", f"{base}/api/py/eorder"),
-        ("installer", f"{base}/api/py/installer-change"),
-        ("order_date", f"{base}/api/py/portal/refresh"),
-        ("order_status", f"{base}/api/py/portal/refresh"),
+        ("eorder_file", f"{base}/api/py/eorder{suffix}"),
+        ("installer", f"{base}/api/py/installer-change{suffix}"),
+        ("order_date", f"{base}/api/py/portal/refresh{suffix}"),
+        ("order_status", f"{base}/api/py/portal/refresh{suffix}"),
     ]
 
     registered, skipped = [], []

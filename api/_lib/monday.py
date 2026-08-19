@@ -25,12 +25,19 @@ class MondayError(RuntimeError):
         self.query = query
 
 
+# One HTTP client per process, not per request. Every route builds a Monday()
+# and a fresh httpx.Client pays a new TCP+TLS handshake to api.monday.com; the
+# process outlives thousands of requests on a warm serverless instance, and
+# these functions serve one request at a time, so sharing is safe.
+_shared_client = httpx.Client(timeout=30)
+
+
 class Monday:
     def __init__(self, token=None, url=None, version=None, timeout=30):
         self.token = token or config.MONDAY_TOKEN
         self.url = url or config.MONDAY_API_URL
         self.version = version or config.MONDAY_API_VERSION
-        self._client = httpx.Client(timeout=timeout)
+        self._client = _shared_client if timeout == 30 else httpx.Client(timeout=timeout)
 
     # -- transport ---------------------------------------------------------
 

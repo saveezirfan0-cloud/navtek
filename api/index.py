@@ -34,28 +34,59 @@ app = FastAPI(title="Navtek eOrder service", docs_url=None, redoc_url=None)
 
 # A bare "HTTP 500" on the setup page tells whoever is running it nothing at
 # all. These put the actual cause in the response body, which is the only place
-# they can see it without opening Vercel's logs.
+# they can see it without opening Vercel's logs — but only for the app's own
+# server-side calls, which carry the shared secret or setup key. An anonymous
+# caller poking the public /api/py/* prefix gets a generic line: raw exception
+# strings can carry database messages, API responses and file paths, which is
+# reconnaissance handed out for free.
+def _caller_is_trusted(request):
+    import hmac as _hmac
+
+    secret = request.headers.get("x-portal-secret", "")
+    if config.PORTAL_SHARED_SECRET and _hmac.compare_digest(
+        secret, config.PORTAL_SHARED_SECRET
+    ):
+        return True
+    key = request.headers.get("x-setup-key", "")
+    return bool(SETUP_KEY) and _hmac.compare_digest(key, SETUP_KEY)
+
+
 @app.exception_handler(MondayError)
 async def _monday_error(request, exc):
-    return JSONResponse({"detail": f"monday API: {exc}"}, status_code=502)
+    if _caller_is_trusted(request):
+        return JSONResponse({"detail": f"monday API: {exc}"}, status_code=502)
+    return JSONResponse({"detail": "monday API error"}, status_code=502)
 
 
 @app.exception_handler(Exception)
 async def _any_error(request, exc):
+    import traceback
+
+    traceback.print_exception(exc)  # the full story, in the Vercel logs
+    if _caller_is_trusted(request):
+        return JSONResponse(
+            {"detail": f"{type(exc).__name__}: {exc}"}, status_code=500
+        )
     return JSONResponse(
-        {"detail": f"{type(exc).__name__}: {exc}"}, status_code=500
+        {"detail": f"Something went wrong ({type(exc).__name__}). "
+                   "The detail is in the server logs."},
+        status_code=500,
     )
 
 
 @app.get("/api/py/health")
-def health():
+def health(fresh: bool = Query(default=False)):
     """What's configured, and where each column ID came from.
 
-    Column IDs are resolved live off the board, so this reflects what the
-    automation would actually use — not just what the environment supplies.
+    Column IDs are resolved off the board, so this reflects what the automation
+    would actually use — not just what the environment supplies. Served from
+    the 5-minute column cache: the dashboard and file tester call this on every
+    load, and each force-read was a full monday GraphQL round trip on the app's
+    most-visited page. ?fresh=1 bypasses the cache when it matters; the setup
+    page's own refresh step always does.
     """
     try:
-        cols = columns_mod.resolved(Monday(), force=True)
+        cols = columns_mod.resolved(Monday(), force=fresh)
         source = "board" if not config.COLUMNS.get("eorder_file") else "COLUMN_IDS"
     except Exception as exc:  # noqa: BLE001
         cols = config.COLUMNS
@@ -98,6 +129,17 @@ def health():
 
 @app.post("/api/py/eorder")
 async def eorder(request: Request):
+    # When WEBHOOK_SECRET is set, the registered URL carries it as ?hook=… and
+    # anything without it is turned away — this endpoint is reachable from the
+    # open internet and drives writes with the account-wide monday token.
+    if config.WEBHOOK_SECRET:
+        import hmac as _hmac
+
+        if not _hmac.compare_digest(
+            request.query_params.get("hook", ""), config.WEBHOOK_SECRET
+        ):
+            raise HTTPException(401, "bad webhook token")
+
     payload = await request.json()
 
     # monday's webhook handshake: echo the challenge on registration.
@@ -136,9 +178,22 @@ async def parse_endpoint(request: Request):
 # Installer-flow webhooks and crons
 # --------------------------------------------------------------------------
 
+def _webhook_guard(request):
+    """Same ?hook= check as /eorder — these endpoints are public and drive
+    monday writes, so with WEBHOOK_SECRET set nothing without it gets in."""
+    if config.WEBHOOK_SECRET:
+        import hmac as _hmac
+
+        if not _hmac.compare_digest(
+            request.query_params.get("hook", ""), config.WEBHOOK_SECRET
+        ):
+            raise HTTPException(401, "bad webhook token")
+
+
 @app.post("/api/py/installer-change")
 async def installer_change(request: Request):
     """monday webhook on the Installer column — reallocation (prompt 4)."""
+    _webhook_guard(request)
     payload = await request.json()
     if "challenge" in payload:
         return {"challenge": payload["challenge"]}
@@ -157,6 +212,7 @@ async def portal_refresh(request: Request):
     date arriving is one half of the SMS rule — re-evaluates the allocation
     trigger. Both halves are idempotent, so duplicate deliveries are free.
     """
+    _webhook_guard(request)
     payload = await request.json()
     if "challenge" in payload:
         return {"challenge": payload["challenge"]}
@@ -175,13 +231,25 @@ async def portal_refresh(request: Request):
 def _cron_authorise(x_portal_secret, authorization):
     """The sweep and resync accept the portal secret (header) or Vercel's
     cron identity (Authorization: Bearer CRON_SECRET) — a cron cannot send
-    custom headers."""
-    if config.PORTAL_SHARED_SECRET and x_portal_secret == config.PORTAL_SHARED_SECRET:
+    custom headers. Fails CLOSED like _authorise: no secrets configured means
+    these routes are disabled, not open."""
+    import hmac as _hmac
+
+    if config.PORTAL_SHARED_SECRET and _hmac.compare_digest(
+        x_portal_secret or "", config.PORTAL_SHARED_SECRET
+    ):
         return
-    if config.CRON_SECRET and authorization == f"Bearer {config.CRON_SECRET}":
+    if config.CRON_SECRET and _hmac.compare_digest(
+        authorization or "", f"Bearer {config.CRON_SECRET}"
+    ):
         return
     if not config.PORTAL_SHARED_SECRET and not config.CRON_SECRET:
-        return
+        raise HTTPException(
+            503,
+            "Neither PORTAL_SHARED_SECRET nor CRON_SECRET is set, so this "
+            "route is disabled. Add one in the Vercel project settings and "
+            "redeploy.",
+        )
     raise HTTPException(401, "bad secret")
 
 
@@ -215,10 +283,23 @@ def portal_resync(
 
 def _authorise(secret):
     """Only the portal may call these. The browser holds the magic-link token;
-    the portal server holds this shared secret and adds it server-side."""
+    the portal server holds this shared secret and adds it server-side.
+
+    Fails CLOSED: with no PORTAL_SHARED_SECRET configured these routes used to
+    wave everyone through — a deployment that skipped one env var silently ran
+    its auth, portal and user-management endpoints open at the network edge,
+    while /health said ok. Missing secret now means nobody gets in, and
+    missing_secrets() names it. Constant-time compare, like the password path.
+    """
+    import hmac as _hmac
+
     if not config.PORTAL_SHARED_SECRET:
-        return
-    if secret != config.PORTAL_SHARED_SECRET:
+        raise HTTPException(
+            503,
+            "PORTAL_SHARED_SECRET is not set, so this route is disabled. "
+            "Add it in the Vercel project settings and redeploy.",
+        )
+    if not _hmac.compare_digest(secret or "", config.PORTAL_SHARED_SECRET):
         raise HTTPException(401, "bad portal secret")
 
 
@@ -392,6 +473,16 @@ def auth_login(body: dict = Body(...), x_portal_secret: str = Header(default="")
     _db_or_503(store)
     email = users.normalise_email(body.get("email", ""))
     password = body.get("password") or ""
+    # Brute force is cheap against a function that scales on demand. Eight
+    # failures in fifteen minutes parks the email — recorded in portal_events,
+    # so it holds across serverless instances, and fails open if the database
+    # is down (throttling must never become the outage).
+    if email and store.recent_failed_logins(email, minutes=15) >= 8:
+        raise HTTPException(
+            429,
+            "Too many failed sign-ins for this email. Wait 15 minutes and try "
+            "again.",
+        )
     row = store.user_by_email(email) if email else None
     # A lookup that failed because the database misbehaved must not be
     # reported as a wrong password — that sends someone resetting credentials
@@ -405,6 +496,8 @@ def auth_login(body: dict = Body(...), x_portal_secret: str = Header(default="")
     stored = row["password_hash"] if row else users.hash_password("timing-decoy")
     ok = users.verify_password(password, stored)
     if not row or not ok or not row.get("active"):
+        if email:
+            store.record_failed_login(email)
         raise HTTPException(401, "That email or password isn't right.")
     return _issue_session(store, row, body.get("user_agent"))
 
@@ -533,6 +626,55 @@ def users_update(
     return {"user": users.public_user(row)}
 
 
+# -- previewing a user (admin) ------------------------------------------------
+
+@app.get("/api/py/users/preview")
+def user_preview(
+    user_id: str = Query(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """What a given login would see — admin only.
+
+    Returns the same shape as /auth/me so the web half can render the app
+    through that user's eyes. Deliberately NOT a session for the target: no
+    token is minted, nothing is impersonated — the admin's own session
+    authorises every request, and writes stay the admin's writes.
+    """
+    _authorise(x_portal_secret)
+    store = Store()
+    _require_admin(_session_user(store, x_session))
+    target = store.user_by_id(user_id)
+    if not target:
+        raise HTTPException(404, "No such user.")
+    return {"user": users.public_user(target)}
+
+
+@app.get("/api/py/portal/preview-jobs")
+def portal_preview_jobs(
+    user_id: str = Query(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """The job list a given installer login would see — admin only, read only.
+
+    The 'viewed' audit event answers "did the installer actually look", so a
+    preview must not forge one (record_view=False).
+    """
+    _authorise(x_portal_secret)
+    store = Store()
+    _require_admin(_session_user(store, x_session))
+    target = store.user_by_id(user_id)
+    if not target:
+        raise HTTPException(404, "No such user.")
+    account = store.account_by_id(target.get("installer_account_id"))
+    if not account:
+        raise HTTPException(
+            409, "That login isn't linked to an installer account yet."
+        )
+    return portal.jobs_for_account(Monday(), store, account, record_view=False)
+
+
 # -- the portal, for logged-in installer users ------------------------------
 
 def _installer_account(store, user):
@@ -599,7 +741,9 @@ def _setup_guard(key):
             "SETUP_KEY is not set. Add it in the Vercel project settings, "
             "redeploy, then reload this page.",
         )
-    if key != SETUP_KEY:
+    import hmac as _hmac
+
+    if not _hmac.compare_digest(key or "", SETUP_KEY):
         raise HTTPException(401, "That setup key doesn't match.")
 
 
@@ -696,13 +840,18 @@ def setup_webhook(body: dict = Body(default={}), x_setup_key: str = Header(defau
 
 
 @app.get("/api/py/selftest")
-def selftest():
+def selftest(x_setup_key: str = Header(default="")):
     """Check every part of the order flow and say which are working.
 
     Deliberately read-only: it touches nothing on the board and writes nothing
     to the database. This is the "is it actually working" answer, in one place,
     rather than five endpoints and a guess.
+
+    Key-guarded: the readout names the token's owner, the webhook IDs and the
+    database diagnosis — a map of the deployment, not something to hand to
+    whoever finds the URL. The setup page holds the key and keeps working.
     """
+    _setup_guard(x_setup_key)
     checks = []
 
     def check(name, fn, needed=True):
@@ -776,18 +925,26 @@ def selftest():
 
 
 @app.get("/api/py/recent")
-def recent(limit: int = Query(default=20)):
-    """Recent eOrder reads, for the dashboard. No secrets in the response."""
+def recent(limit: int = Query(default=20), x_portal_secret: str = Header(default="")):
+    """Recent eOrder reads, for the dashboard. No secrets — but customer names,
+    order IDs and file names ARE business data, so only the app's own server
+    (which holds the shared secret and sits behind the login) may ask."""
+    _authorise(x_portal_secret)
     store = Store()
-    probe = store.ping()
-    if not probe["ok"]:
-        return {"enabled": False, "ingests": [], "database": probe}
+    if not store.enabled:
+        return {"enabled": False, "ingests": [], "database": store.ping()}
     try:
+        # Straight to the query — the old ping-first pattern doubled the
+        # database round trips on every dashboard load. ping() now runs only
+        # to DIAGNOSE a failure (and _send has already tried the fallback
+        # credential pair by then).
         rows = store.recent_ingests(min(limit, 50))
     except Exception as exc:  # noqa: BLE001
         return {"enabled": False, "ingests": [],
                 "database": {"ok": False, "state": "error",
                              "detail": f"{type(exc).__name__}: {exc}"}}
+    if store.degraded:
+        return {"enabled": False, "ingests": [], "database": store.ping()}
     return {
         "enabled": True,
         "ingests": [

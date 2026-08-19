@@ -89,17 +89,30 @@ def fetch_jobs(monday, store, account):
     column_id = cols.get("installer")
 
     if column_id:
+        # Only the columns _shape() actually reads — the board carries 25+,
+        # including raw JSON blobs, and this query runs on a phone's clock.
+        # Inlined as literals (our own resolved IDs) rather than a variable:
+        # column_values(ids:) wants [String!], which the GraphQL lint in
+        # tests/test_graphql.py rightly forbids for column_values FILTERS.
+        wanted = [cols.get(k) for k in (
+            "site_contact", "site_phone", "site_address", "opportunity_id",
+            "order_date", "contacted_date", "booked_date",
+            "scheduled_install_date", "units_total", "units_installed",
+            "installer",
+        )]
+        import json as _json
+        ids_literal = _json.dumps([c for c in wanted if c])
         try:
             raw = monday.gql(
-                """
-                query ($b: ID!, $c: String!, $v: [String]!) {
+                f"""
+                query ($b: ID!, $c: String!, $v: [String]!) {{
                   items_page_by_column_values (
                     board_id: $b, limit: 100,
-                    columns: [{column_id: $c, column_values: $v}]
-                  ) {
-                    items { id name column_values { id type text value } }
-                  }
-                }
+                    columns: [{{column_id: $c, column_values: $v}}]
+                  ) {{
+                    items {{ id name column_values (ids: {ids_literal}) {{ id type text }} }}
+                  }}
+                }}
                 """,
                 {
                     "b": str(config.ORDERS_BOARD_ID),
@@ -109,10 +122,11 @@ def fetch_jobs(monday, store, account):
             )
             items = (raw.get("items_page_by_column_values") or {}).get("items") or []
             jobs = [_shape(item, cols, state=account.get("state")) for item in items]
-            for job in jobs:
-                store.cache_job(
-                    job["item_id"], job, installer_account_id=account["id"]
-                )
+            store.cache_jobs([
+                {"monday_item_id": job["item_id"], "data": job,
+                 "installer_account_id": account["id"]}
+                for job in jobs
+            ])
             return jobs, datetime.now(timezone.utc).isoformat()
         except Exception:  # noqa: BLE001 - fall back rather than show nothing
             pass
@@ -125,7 +139,12 @@ def fetch_jobs(monday, store, account):
     return [row["data"] for row in rows], refreshed
 
 
-def jobs_for_account(monday, store, account):
+def jobs_for_account(monday, store, account, record_view=True):
+    """The portal response: fetch_jobs, grouped and counted.
+
+    record_view=False is the admin preview: the 'viewed' audit event answers
+    "did the installer actually look", so an admin previewing must not forge it.
+    """
     jobs, refreshed_at = fetch_jobs(monday, store, account)
 
     action, waiting = [], []
@@ -134,8 +153,9 @@ def jobs_for_account(monday, store, account):
 
     action.sort(key=lambda j: -(j.get("overdue_days") or 0))
 
-    store.record_event(0, "viewed", installer_account_id=account["id"],
-                       payload={"jobs": len(jobs)})
+    if record_view:
+        store.record_event(0, "viewed", installer_account_id=account["id"],
+                           payload={"jobs": len(jobs)})
 
     stale = _is_stale(refreshed_at)
     return {

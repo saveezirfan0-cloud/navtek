@@ -234,6 +234,7 @@ left, value on the right, click **Add**.
 | `PORTAL_SHARED_SECRET` | your second random string |
 | `SETUP_KEY` | your first random string |
 | `WRITE_ORDER_TYPE` | `false` |
+| `WEBHOOK_SECRET` | *(optional but recommended)* a third random string. With it set, the monday webhook URL carries a token and the automation rejects anything else that posts to it. Set it before running Setup step 4 — or set it later and run step 4 again. |
 
 Check for stray spaces at the start or end of each pasted value. That is the
 single most common cause of "it says my token is wrong".

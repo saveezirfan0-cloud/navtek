@@ -26,6 +26,14 @@ function base() {
   return "http://127.0.0.1:3000";
 }
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function call(path: string, init: RequestInit = {}) {
   const response = await fetch(`${base()}/api/py${path}`, {
     ...init,
@@ -39,7 +47,10 @@ async function call(path: string, init: RequestInit = {}) {
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(data?.detail ?? `service returned ${response.status}`);
+    throw new ApiError(
+      data?.detail ?? `service returned ${response.status}`,
+      response.status,
+    );
   }
   return data;
 }
@@ -79,11 +90,15 @@ export type JobsResponse = {
   stale?: boolean;
 };
 
-export async function getJobs(token: string): Promise<JobsResponse | null> {
+/** `gone` is only true when the service itself said the link is unknown — a
+ * timeout or a 500 must NOT tell an installer their link is dead. */
+export async function getJobs(
+  token: string,
+): Promise<{ jobs: JobsResponse | null; gone: boolean }> {
   try {
-    return await call(`/portal/jobs?token=${encodeURIComponent(token)}`);
-  } catch {
-    return null;
+    return { jobs: await call(`/portal/jobs?token=${encodeURIComponent(token)}`), gone: false };
+  } catch (error) {
+    return { jobs: null, gone: error instanceof ApiError && error.status === 404 };
   }
 }
 
@@ -138,7 +153,7 @@ export async function getRecent(): Promise<{
   database?: DbState;
 }> {
   try {
-    return await call("/recent");
+    return await call("/recent?limit=50");
   } catch (error) {
     // The request itself failed — say so, rather than reporting it as an
     // unconfigured database, which sends people to check the wrong thing.
@@ -295,6 +310,39 @@ export async function adminUpdateUser(
     body: JSON.stringify(input),
     headers: { "X-Session": session },
   });
+}
+
+// -- previewing a user (admin) -----------------------------------------------
+
+/** The AuthUser a given login resolves to — admin session required. Used to
+ * render the app through that user's eyes without minting them a session. */
+export async function adminPreviewUser(
+  session: string,
+  userId: string,
+): Promise<AuthUser | null> {
+  try {
+    const data = await call(`/users/preview?user_id=${encodeURIComponent(userId)}`, {
+      headers: { "X-Session": session },
+    });
+    return data.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The job list a given installer login would see — admin session required,
+ * read only (no 'viewed' event is recorded server side). */
+export async function getPreviewJobs(
+  session: string,
+  userId: string,
+): Promise<JobsResponse | null> {
+  try {
+    return await call(`/portal/preview-jobs?user_id=${encodeURIComponent(userId)}`, {
+      headers: { "X-Session": session },
+    });
+  } catch {
+    return null;
+  }
 }
 
 // -- the portal, for logged-in installer users ------------------------------

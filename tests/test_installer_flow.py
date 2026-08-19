@@ -135,6 +135,11 @@ class FlowStore:
             "refreshed_at": self.now.isoformat(),
         }
 
+    def cache_jobs(self, rows):
+        for row in rows:
+            self.cache_job(row["monday_item_id"], row["data"],
+                           row.get("installer_account_id"))
+
     def cached_jobs(self, installer_account_id):
         return [row for row in self.cache.values()
                 if row["installer_account_id"] == installer_account_id]

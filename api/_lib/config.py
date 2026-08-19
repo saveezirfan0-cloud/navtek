@@ -16,7 +16,7 @@ import os
 # Bumped with every packaged build. Shown on /health and the dashboard so
 # "which build is actually live" is a fact you can read, not a guess — an
 # ambiguity that has cost real debugging time in this project.
-APP_VERSION = "2026-08-19.4"
+APP_VERSION = "2026-08-19.6"
 
 
 def _clean_secret(value):
@@ -92,6 +92,13 @@ PORTAL_SHARED_SECRET = os.environ.get("PORTAL_SHARED_SECRET", "")
 # The sweep and resync endpoints accept it as an alternative to the portal
 # secret, because a cron cannot send custom headers.
 CRON_SECRET = os.environ.get("CRON_SECRET", "")
+
+# Optional webhook hardening. When set, the registered webhook URL carries it
+# as ?hook=… and /eorder rejects deliveries without it — otherwise anyone who
+# can reach the public URL can hand the automation a payload. Set it, then
+# re-run setup step 4 so the registration picks it up.
+WEBHOOK_SECRET = _clean_secret(os.environ.get("WEBHOOK_SECRET", ""))
+
 
 # Where the app is reachable from an installer's phone — used to build the
 # portal link in SMS bodies. Falls back to Vercel's own idea of the deployment.
@@ -292,4 +299,9 @@ def missing_secrets():
         missing.append("MONDAY_TOKEN")
     if not supabase_candidates():
         missing.append("SUPABASE_URL + SUPABASE_SERVICE_KEY")
+    # Without it, logins, the portal and user management refuse to serve
+    # (they fail closed rather than running open) — so its absence is a
+    # missing secret, not a quiet default.
+    if not PORTAL_SHARED_SECRET:
+        missing.append("PORTAL_SHARED_SECRET")
     return missing

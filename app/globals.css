@@ -115,7 +115,7 @@ details[open] .more { display: none; }
 }
 .count .btn { width: auto; flex: 0 0 auto; padding: 15px 20px; margin: 0; }
 
-.foot { text-align: center; font-size: 12.5px; color: #93a1b0; padding: 18px 16px 24px; line-height: 1.6; }
+.foot { text-align: center; font-size: 12.5px; color: #5b6b7b; padding: 18px 16px 24px; line-height: 1.6; }
 
 /* New: error and empty states. The prototype had neither — both are moments
    for direction, not apology. */
@@ -300,3 +300,43 @@ pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
 /* Wide tables scroll inside themselves rather than the page. */
 .scroll-x { overflow-x: auto; }
 .scroll-x table { min-width: 760px; }
+
+/* -- admin preview of another login ---------------------------------------- */
+/* Loud on purpose: an admin looking through someone else's eyes should never
+   mistake it for their own session. */
+.preview-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 9px 22px; font-size: 14.5px; font-weight: 600;
+  background: #7c2d92; color: #fff;
+}
+.preview-bar b { font-weight: 800; }
+.preview-exit {
+  border: 1px solid rgba(255, 255, 255, .65); border-radius: 7px;
+  background: rgba(255, 255, 255, .14); color: #fff;
+  font: inherit; font-size: 13.5px; font-weight: 700;
+  padding: 4px 12px; cursor: pointer;
+}
+.preview-exit:hover { background: rgba(255, 255, 255, .28); }
+.wrap .preview-bar { border-radius: 10px; margin-bottom: 14px; }
+
+.btn-ghost {
+  border: 1px solid var(--line, #cdd7e1); border-radius: 7px;
+  background: transparent; color: inherit; font: inherit; font-size: 13.5px;
+  padding: 5px 10px; cursor: pointer; white-space: nowrap;
+}
+.btn-ghost:hover:not(:disabled) { background: rgba(16, 32, 48, .06); }
+.btn-ghost:disabled { opacity: .45; cursor: default; }
+
+/* -- second-step prompts on job actions (book date, blocked reason, confirm) */
+.ask {
+  border: 1.5px solid #cdd7e1; border-radius: 12px; padding: 12px;
+  margin: 6px 0; display: grid; gap: 8px; background: rgba(16, 32, 48, .025);
+}
+.ask label { font-size: 14px; font-weight: 650; }
+.ask input[type="date"], .ask textarea {
+  font: inherit; padding: 10px; border: 1.5px solid #cdd7e1;
+  border-radius: 9px; width: 100%; background: #fff;
+}
+.ask-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.ask-row .btn { margin: 0; flex: 1 1 auto; }
+.b-plain { background: transparent; color: inherit; border: 1.5px solid #cdd7e1; }

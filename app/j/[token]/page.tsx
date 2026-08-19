@@ -2,6 +2,8 @@ import { getJobs } from "@/lib/api";
 import JobCard from "@/app/jobs/JobCard";
 import Staleness from "@/app/jobs/Staleness";
 
+export const metadata = { title: "Your jobs · Navtek installs" };
+
 export const dynamic = "force-dynamic";
 
 /** The magic-link portal. The link is the password — no sign-in, by design:
@@ -12,17 +14,32 @@ export default async function Portal({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  const data = await getJobs(token);
+  const { jobs: data, gone } = await getJobs(token);
 
   if (!data) {
+    // "Link is dead" and "service hiccuped" are different messages. Telling
+    // an installer to bin a perfectly good link over a timeout costs Navtek a
+    // phone call and a reissue every time the backend blinks.
     return (
       <div className="wrap">
         <div className="notice">
-          <h2>This link no longer works</h2>
-          <p>
-            Ask Navtek to send you a new one — links are reissued when an account
-            changes.
-          </p>
+          {gone ? (
+            <>
+              <h2>This link no longer works</h2>
+              <p>
+                Ask Navtek to send you a new one — links are reissued when an
+                account changes.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2>Couldn&rsquo;t load your jobs just now</h2>
+              <p>
+                Your link is fine — the service didn&rsquo;t answer. Wait a
+                moment and reload this page.
+              </p>
+            </>
+          )}
         </div>
       </div>
     );

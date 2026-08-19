@@ -1,5 +1,6 @@
 import type { Job } from "@/lib/api";
 import JobActions from "./JobActions";
+import { fmtDate } from "./dates";
 
 /**
  * One job, as a tappable card. Shared between the magic-link portal at
@@ -20,7 +21,7 @@ function chip(job: Job) {
         text: `🔧 ${job.units_installed} of ${job.units_total} fitted`,
       };
     }
-    return { cls: "c-green", text: `📅 Booked${job.scheduled ? ` ${job.scheduled}` : ""}` };
+    return { cls: "c-green", text: `📅 Booked${job.scheduled ? ` ${fmtDate(job.scheduled)}` : ""}` };
   }
   if (job.contacted) {
     return { cls: "c-blue", text: "☎ Contacted — no date booked yet" };
@@ -32,7 +33,17 @@ function chip(job: Job) {
   return { cls: "c-amber", text: `Contact the customer — day ${days} of ${SLA_DAYS}` };
 }
 
-export default function JobCard({ job, token }: { job: Job; token?: string }) {
+export default function JobCard({
+  job,
+  token,
+  readOnly = false,
+}: {
+  job: Job;
+  token?: string;
+  /** Admin preview: show the card exactly as the installer sees it, minus the
+   * buttons — a preview must never book, complete or block a real job. */
+  readOnly?: boolean;
+}) {
   const tag = chip(job);
   const units = job.units_total ? `${job.units_total} units` : null;
 
@@ -43,7 +54,7 @@ export default function JobCard({ job, token }: { job: Job; token?: string }) {
         {job.site_address && <div className="loc">{job.site_address}</div>}
         {units && <div className="kit">{units}</div>}
         <div className="meta">
-          {job.dispatched ? `Dispatched ${job.dispatched}` : "Not yet dispatched"}
+          {job.dispatched ? `Dispatched ${fmtDate(job.dispatched)}` : "Not yet dispatched"}
           {job.opportunity_id ? ` · ${job.opportunity_id}` : ""}
         </div>
         <span className={`chip ${tag.cls}`}>{tag.text}</span>
@@ -60,7 +71,7 @@ export default function JobCard({ job, token }: { job: Job; token?: string }) {
           )}
           <div className="row">
             <span className="k">Dispatched</span>
-            <span className="v">{job.dispatched ?? "Not yet"}</span>
+            <span className="v">{fmtDate(job.dispatched) ?? "Not yet"}</span>
           </div>
           <div className="row">
             <span className="k">Site contact</span>
@@ -73,13 +84,15 @@ export default function JobCard({ job, token }: { job: Job; token?: string }) {
           {job.contacted && (
             <div className="row">
               <span className="k">You contacted</span>
-              <span className="v">{job.contacted}</span>
+              <span className="v">{fmtDate(job.contacted)}</span>
             </div>
           )}
         </div>
 
         {job.state === "waiting" ? (
           <div className="flat">Hardware not dispatched yet — nothing to do</div>
+        ) : readOnly ? (
+          <div className="flat">Preview — actions are disabled</div>
         ) : (
           <JobActions job={job} token={token} />
         )}
