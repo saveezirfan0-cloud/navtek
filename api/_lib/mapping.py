@@ -266,8 +266,19 @@ def validate(parsed, installer_match=None):
 
     A missing installer is explicitly NOT a warning — only 1 of 5 sample orders
     named one, so it is the normal case (§8.1).
+
+    Several checks here are also made by the parser's own `_validate()`, whose
+    output arrives in `_warnings`. That overlap is deliberate — this layer must
+    still warn if a parser revision drops a check — but the same fact must not
+    reach the row twice, so each duplicate-prone append is guarded by a
+    substring the parser's wording shares, and the final list is deduplicated.
     """
     warnings = list(parsed.get("_warnings") or [])
+
+    def already_flagged(*needles):
+        return any(
+            all(needle in warning for needle in needles) for warning in warnings
+        )
 
     missing_critical = [f for f in CRITICAL_FIELDS if _is_blank(parsed.get(f))]
     if missing_critical:
@@ -275,7 +286,7 @@ def validate(parsed, installer_match=None):
 
     ship_to = str(_get(parsed, "ship_to_type", default="")).lower()
 
-    if ship_to == "multiple":
+    if ship_to == "multiple" and not already_flagged("subitem"):
         sites = _get(parsed, "multi_site", default=[]) or []
         warnings.append(
             f"ship-to is Multiple Addresses — {len(sites)} site(s) split to subitems"
@@ -285,7 +296,9 @@ def validate(parsed, installer_match=None):
     # nothing_to_ship, multiple, unknown. "unknown" means the ship-to cell was
     # empty, which is the case the brief wants flagged — with nothing there we
     # cannot tell whether an install is needed.
-    if ship_to == "unknown" or _is_blank(_get(parsed, "installer_company")):
+    if (
+        ship_to == "unknown" or _is_blank(_get(parsed, "installer_company"))
+    ) and not already_flagged("ship-to", "blank"):
         warnings.append("ship-to is blank — cannot tell whether an install is needed")
 
     missing_expected = [f for f in EXPECTED_FIELDS if _is_blank(parsed.get(f))]
@@ -308,6 +321,7 @@ def validate(parsed, installer_match=None):
             f"Accounts board — allocation left blank"
         )
 
+    warnings = list(dict.fromkeys(warnings))
     return (STATUS_CHECK if warnings else STATUS_READ), warnings
 
 
@@ -358,43 +372,43 @@ def to_column_values(parsed, columns=None, installer_item_ids=None):
 
 
 def install_sites(parsed):
-    """The order's install sites, one uniform dict per Install item.
+    """The uniform install-site list for an order (Prompt 1 of the finalisation
+    pack): one entry per site that needs an install, whatever the order shape.
 
-    Every order with Install Required = Yes gets exactly one Install item per
-    site: the multi-site rows when the eOrder has them, otherwise ONE site
-    built from the main delivery block — so the portal, the SLA clock and the
-    SMS trigger operate on a single object shape and single-site orders (the
-    majority) stop being a divergent code path. Orders with Install Required =
-    No — Change of Ownership, Service Only Renewal, customer self-install —
-    create none.
+    - Multiple Addresses order → its multi_site rows, unchanged (their install
+      items inherit the order's dispatch date from the parent row in the
+      portal's _shape fallback).
+    - Single-site order with Install Required = Yes → exactly one entry, built
+      from the main delivery block, carrying the same fields a multi-site row
+      does (contact, phone, email, address, units, dispatch date).
+    - Install Required = No or Customer self-install → none.
 
-    Every site carries the same keys, sourced the same way the multi-site rows
-    are: contact, phone, email, address, qty, and the order's dispatch date.
+    Every install item the ingest creates comes from this list, so the portal,
+    the SLA clock and the SMS trigger see one shape — no single-site special
+    case downstream.
     """
-    required = str(_get(parsed, "install_required", default="")).strip().lower()
-    if required != "yes":
+    if str(_get(parsed, "install_required") or "").strip().lower() != "yes":
         return []
-
-    dispatch = _get(parsed, "order_date")
     sites = _get(parsed, "multi_site", default=[]) or []
     if sites:
-        return [{**site, "dispatched": site.get("dispatched") or dispatch}
-                for site in sites if isinstance(site, dict)]
-
+        return list(sites)
     return [{
-        "company": _get(parsed, "company"),
+        # Ship-to company, matching what a multi-site row carries per site.
+        "company": _get(parsed, "installer_company") or _get(parsed, "company"),
         "contact": _get(parsed, "site_contact_name"),
-        "phone": _get(parsed, "site_contact_phone"),
+        "phone": _get(parsed, "site_phone_display") or _get(parsed, "site_contact_phone"),
         "phone_e164": _get(parsed, "site_phone_e164"),
         "email": _get(parsed, "site_contact_email"),
         "address": site_address(parsed),
         "qty": units_total(parsed),
-        "dispatched": dispatch,
+        "dispatch": _get(parsed, "order_date"),
+        "notes": None,
     }]
 
 
 def subitem_values(site, columns=None):
-    """Column values for one Install item — a site of any order (§8.4)."""
+    """Column values for one install item — a site of a Multiple Addresses
+    order (§8.4), or the single site of an ordinary install order (Prompt 1)."""
     cols = columns or config.COLUMNS
     out = {}
 
@@ -408,7 +422,7 @@ def subitem_values(site, columns=None):
     put("site_email", v_email(site.get("email")))
     put("site_address", v_text(site.get("address")))
     put("units_total", v_number(site.get("qty")))
-    put("order_date", v_date(site.get("dispatched")))
+    put("order_date", v_date(site.get("dispatch")))
     return out
 
 

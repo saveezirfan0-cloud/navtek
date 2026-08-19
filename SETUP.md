@@ -154,16 +154,20 @@ GitHub replaces the placeholder. Click the file to confirm it now begins
    the tables. On most projects it is already true and the script changes
    nothing; on projects where it isn't, every key fails with "permission
    denied" until this runs.
-7. Repeat with `0004_installer_flow.sql` — that one creates the SMS/SLA
+7. Repeat with `0004_webhook_log.sql` — that one records every webhook
+   delivery, so a skipped duplicate and a processed order stop looking
+   identical in monday's own log.
+8. Repeat with `0005_installer_flow.sql` — that one creates the SMS/SLA
    dedupe table and adds a State to each installer account. Without it the
    installer notifications can't guarantee one-text-per-job, so they stay off.
 
 You want **Success. No rows returned.** That is what a successful table
 creation looks like — it isn't an error.
 
-Confirm it: click **Table Editor**. You should see eight tables —
+Confirm it: click **Table Editor**. You should see nine tables —
 `installer_accounts`, `eorder_ingests`, `portal_events`, `jobs_cache`,
-`unknown_order_reasons`, `app_users`, `app_sessions`, `notifications`.
+`unknown_order_reasons`, `app_users`, `app_sessions`, `webhook_log`,
+`notifications`.
 
 ### 3.3 Copy two values
 

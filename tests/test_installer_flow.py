@@ -90,6 +90,11 @@ class FlowMonday:
             return {"items_page_by_column_values": {"items": found}}
         raise AssertionError(f"unexpected gql in test: {query[:80]}")
 
+    def subitems(self, item_id):
+        # Orders in these tests carry no install subitems, so the order row
+        # stands in as its single install item (portal.install_items).
+        return []
+
     def item(self, item_id):
         for candidate in self.items:
             if str(candidate["id"]) == str(item_id):
@@ -230,8 +235,13 @@ def test_multi_site_orders_get_one_install_item_per_site():
     }
     sites = mapping.install_sites(parsed)
     assert [s["company"] for s in sites] == ["Site A", "Site B"]
-    # Every site carries the order's dispatch date.
-    assert all(s["dispatched"] == "July 2, 2026" for s in sites)
+    # A single-site order's one install item carries the dispatch date; the
+    # multi-site rows inherit it from the parent row in the portal instead.
+    single = mapping.install_sites({
+        "install_required": "Yes", "order_date": "July 2, 2026",
+        "company": "KANE", "multi_site": [],
+    })
+    assert single[0]["dispatch"] == "July 2, 2026"
 
 
 def test_install_sites_is_empty_for_self_install():

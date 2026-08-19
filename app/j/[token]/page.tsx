@@ -1,4 +1,5 @@
 import { getJobs } from "@/lib/api";
+import AutoRefresh from "@/app/AutoRefresh";
 import JobCard from "@/app/jobs/JobCard";
 import Staleness from "@/app/jobs/Staleness";
 
@@ -50,6 +51,7 @@ export default async function Portal({
 
   return (
     <div className="wrap">
+      <AutoRefresh seconds={60} />
       <header>
         <div className="brand">{account.name} · Navtek installs</div>
         <div className="who">{account.coordinator ?? account.name}</div>
@@ -75,12 +77,12 @@ export default async function Portal({
 
       {action_needed.length > 0 && <div className="sect">Action needed</div>}
       {action_needed.map((job) => (
-        <JobCard key={job.item_id} job={job} token={token} />
+        <JobCard key={job.install_id ?? job.item_id} job={job} token={token} />
       ))}
 
       {waiting.length > 0 && <div className="sect">Waiting on hardware</div>}
       {waiting.map((job) => (
-        <JobCard key={job.item_id} job={job} token={token} />
+        <JobCard key={job.install_id ?? job.item_id} job={job} token={token} />
       ))}
 
       {total === 0 && waiting.length === 0 && (

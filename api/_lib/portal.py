@@ -9,8 +9,14 @@ The shape follows the prototypes exactly — jobs are grouped into "Action neede
 and "Waiting on hardware", and each carries the SLA age in business days that
 drives the red chip. Business days are Australian: weekends plus the public
 holidays of the installer account's state (holidays_au.py).
+
+The unit of work everywhere in here is the INSTALL ITEM (finalisation Prompt 1):
+one per site, single-site orders included. The ingest creates them as subitems;
+orders that predate that get one synthesized from the order row. Either way,
+everything downstream of install_items() sees the same shape.
 """
 
+import re
 from datetime import date, datetime, timedelta, timezone
 
 from . import columns as columns_mod
@@ -121,9 +127,16 @@ def fetch_jobs(monday, store, account):
                 },
             )
             items = (raw.get("items_page_by_column_values") or {}).get("items") or []
-            jobs = [_shape(item, cols, state=account.get("state")) for item in items]
+            jobs = []
+            for item in items:
+                jobs.extend(
+                    install_items(monday, item, cols, state=account.get("state"))
+                )
+            # One batched upsert, keyed by the install item's own id — two
+            # sites of one order must not overwrite each other in the cache.
             store.cache_jobs([
-                {"monday_item_id": job["item_id"], "data": job,
+                {"monday_item_id": job["install_id"], "data": job,
+                 "monday_subitem_id": job.get("subitem_id"),
                  "installer_account_id": account["id"]}
                 for job in jobs
             ])
@@ -188,24 +201,59 @@ def _is_stale(refreshed_at):
     return datetime.now(timezone.utc) - when > timedelta(hours=1)
 
 
-def _shape(item, cols=None, state=None):
-    """One monday item → the uniform install-job object.
+def install_items(monday, item, cols=None, state=None):
+    """One order → its uniform list of install-item jobs (Prompt 1).
 
-    Everything downstream — the portal card, the SLA sweep, the SMS trigger —
-    reads this one shape; there is deliberately no single-site special case.
+    An order ingested since install items became universal carries one subitem
+    per site — single-site orders included — and each subitem is one job. An
+    order from before that carries none, and the order row itself stands in as
+    its single install item. Callers never branch on which case it was.
+    """
+    try:
+        subs = monday.subitems(item["id"]) or []
+    except Exception:  # noqa: BLE001 - an unreadable subitem list ≠ no jobs
+        subs = []
+    if not subs:
+        return [_shape(item, cols, state=state)]
+    return [_shape(item, cols, sub, state=state) for sub in subs]
+
+
+# Install items are often created bare — monday refuses the column values when
+# the subitem board doesn't mirror the parent's IDs — so the per-site quantity
+# survives only in the name mapping.subitem_name() built: "GPS Tech — 7 units".
+UNITS_IN_NAME = re.compile(r"—\s*(\d+)\s*units?\s*$")
+
+
+def _shape(item, cols=None, sub=None, state=None):
+    """One install item → the fields the portal card renders.
+
+    `sub` is the install subitem when the order carries them. Its own values
+    win; the order row fills anything the subitem was created without, which
+    is everything when monday refused the subitem's column values. `state` is
+    the installer account's state, driving which public holidays the SLA age
+    skips.
     """
     cols = cols or config.COLUMNS
     values = {c["id"]: c for c in item.get("column_values", [])}
+    sub_values = {c["id"]: c for c in (sub or {}).get("column_values", [])}
 
     def text(key):
         column_id = cols.get(key)
-        return values.get(column_id, {}).get("text") if column_id else None
+        if not column_id:
+            return None
+        own = sub_values.get(column_id, {}).get("text")
+        return own or values.get(column_id, {}).get("text")
 
     dispatched = text("order_date")
     contacted = text("contacted_date")
     booked = text("booked_date")
 
     units_total = _int(text("units_total"))
+    if sub is not None:
+        column_id = cols.get("units_total")
+        own = _int(sub_values.get(column_id, {}).get("text")) if column_id else None
+        named = UNITS_IN_NAME.search(sub.get("name") or "")
+        units_total = own or (int(named.group(1)) if named else None) or units_total
     units_installed = _int(text("units_installed"))
 
     if not dispatched:
@@ -219,6 +267,12 @@ def _shape(item, cols=None, state=None):
 
     return {
         "item_id": item["id"],
+        # The install item's own identity. Write-backs still target item_id —
+        # the portal's columns live on the orders board — but caching, React
+        # keys and the coming SLA/SMS work key on this.
+        "install_id": (sub or {}).get("id") or item["id"],
+        "subitem_id": (sub or {}).get("id"),
+        "site": (sub or {}).get("name"),
         "name": item["name"],
         "customer": item["name"].split("=")[0].strip(),
         "site_contact": text("site_contact"),
@@ -254,11 +308,12 @@ def _int(value):
 # --------------------------------------------------------------------------
 
 def refresh_item(monday, store, item_id):
-    """Re-pull one item and overwrite its cache row.
+    """Re-pull one order and overwrite its install items' cache rows.
 
     Called by the column webhooks (dispatch date, status, installer) so a
     direct edit in monday reaches the portal's fallback path within seconds
-    rather than at the next portal load.
+    rather than at the next portal load. Keyed exactly like fetch_jobs — one
+    row per install item — so the two writers never fight over row identity.
     """
     item = monday.item(item_id)
     if not item:
@@ -268,12 +323,15 @@ def refresh_item(monday, store, item_id):
 
     cols = columns_mod.resolved(monday)
     account = _account_for_item(store, item, cols)
-    job = _shape(item, cols, state=(account or {}).get("state"))
-    store.cache_job(
-        int(item_id), job,
-        installer_account_id=account["id"] if account else None,
-    )
+    jobs = install_items(monday, item, cols, state=(account or {}).get("state"))
+    store.cache_jobs([
+        {"monday_item_id": job["install_id"], "data": job,
+         "monday_subitem_id": job.get("subitem_id"),
+         "installer_account_id": account["id"] if account else None}
+        for job in jobs
+    ])
     return {"ok": True, "item_id": item_id, "cached": True,
+            "jobs": len(jobs),
             "account": account["account_name"] if account else None}
 
 

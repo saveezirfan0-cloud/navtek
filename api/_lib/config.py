@@ -245,6 +245,16 @@ COLUMNS = _load_columns()
 # because a blank prompts someone to fill it in and a wrong one does not.
 WRITE_ORDER_TYPE = os.environ.get("WRITE_ORDER_TYPE", "false").lower() == "true"
 
+# Testing escape hatch: re-read a file the ledger has already seen instead of
+# skipping it. The duplicate skip (acceptance criterion 2) is right for
+# production — the same file re-dropped must not fork or re-notify — but while
+# testing, dropping the same sample repeatedly is the whole workflow, and every
+# drop after the first looks like the automation died. Default off; existing
+# monday values are still never clobbered when it is on (merge_preserving).
+ALLOW_DUPLICATE_FILES = (
+    os.environ.get("ALLOW_DUPLICATE_FILES", "false").lower() == "true"
+)
+
 # Fuzzy-match threshold for ship-to → Installer Account. Below this we write
 # nothing and flag Check rather than guessing (brief §6.2).
 INSTALLER_MATCH_THRESHOLD = float(os.environ.get("INSTALLER_MATCH_THRESHOLD", "0.86"))

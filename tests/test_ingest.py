@@ -136,6 +136,7 @@ class FakeStore:
         self.degraded = "simulated failure" if broken else None
         self.ingests = []
         self.unknown_reasons = []
+        self.webhooks = []
 
     def already_ingested(self, opportunity_id, file_sha):
         if self.broken:
@@ -159,6 +160,10 @@ class FakeStore:
 
     def record_unknown_order_reason(self, reason, opp, name):
         self.unknown_reasons.append(reason)
+
+    def record_webhook(self, **fields):
+        self.webhooks.append(fields)
+        return []
 
     def installer_accounts(self, active_only=True):
         return []
@@ -208,6 +213,23 @@ def test_identical_file_dropped_twice_is_skipped():
     assert monday2.written == {}
     assert monday2.renamed is None
     assert len(store.ingests) == 1
+    # The skip must be VISIBLE — a person re-dropping the file sees Success in
+    # monday's automation log, and without this notice concludes the app broke.
+    assert any("Already read" in u for u in monday2.updates)
+
+
+# -- every webhook delivery leaves a trace, including the invisible ones ------
+
+def test_webhook_log_records_processed_and_skipped_outcomes():
+    store = FakeStore()
+    run(KANE, store=store)
+    run(KANE, store=store)  # duplicate — skipped, absent from the ingest ledger
+
+    assert [w["outcome"] for w in store.webhooks] == ["processed", "skipped"]
+    skipped = store.webhooks[1]
+    assert skipped["reason"] == "identical file already read"
+    assert skipped["opportunity_id"] == "006VP00000agsnG"
+    assert len(store.ingests) == 1  # the ledger itself still holds one read
 
 
 # -- criterion 3: a revised eOrder updates and says what changed -------------
@@ -250,6 +272,32 @@ def test_orders_with_nothing_to_ship_read_clean(sample):
     assert result["ok"]
     assert result["status"] == "✅ Read", result["warnings"]
     assert monday.written["color_install"] == {"label": "No"}
+    # Install Required = No → no install items (Prompt 1).
+    assert monday.subitems_created == []
+
+
+# -- Prompt 1: every install order gets one install item per site ------------
+
+def test_single_site_install_order_gets_exactly_one_install_item():
+    result, monday, _ = run(KANE)
+    assert result["ok"]
+    # One site, one install item — named ship-to + units like a multi-site row.
+    assert monday.subitems_created == ["FFT TECHNOLOGY — 44 units"]
+
+
+# -- ALLOW_DUPLICATE_FILES: the testing escape hatch --------------------------
+
+def test_duplicate_files_are_reprocessed_when_the_flag_is_on(monkeypatch):
+    monkeypatch.setattr(config, "ALLOW_DUPLICATE_FILES", True)
+    store = FakeStore()
+    run(KANE, store=store)
+
+    second, monday2, _ = run(KANE, store=store)
+    assert second["ok"] and not second.get("skipped")
+    assert second["duplicate_reread"] is True
+    # It really re-ran — fields written, no "Already read" brush-off.
+    assert monday2.written["text_contact"] == "Gerard Cahalan"
+    assert not any("Already read" in u for u in monday2.updates)
 
 
 # -- ACV only on new-revenue reasons (§4.1) ---------------------------------

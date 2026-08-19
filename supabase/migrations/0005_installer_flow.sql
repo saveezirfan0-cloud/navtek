@@ -1,5 +1,5 @@
 -- Navtek eOrder → monday automation
--- 0004_installer_flow.sql — the installer workflow: SMS dedupe and SLA state.
+-- 0005_installer_flow.sql — the installer workflow: SMS dedupe and SLA state.
 --
 -- Safe to run more than once, same as 0001–0003. Run it in the Supabase SQL
 -- Editor after the earlier migrations.
