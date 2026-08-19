@@ -1,5 +1,7 @@
 import Nav from "./Nav";
+import NoAccess from "./NoAccess";
 import { getHealth, getRecent } from "@/lib/api";
+import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +19,16 @@ function when(iso: string) {
 }
 
 export default async function Dashboard() {
+  const user = await requireUser();
+  if (!user.can_orders) {
+    return (
+      <>
+        <Nav current="/" user={user} />
+        <NoAccess user={user} need="Orders" />
+      </>
+    );
+  }
+
   const [health, recent] = await Promise.all([getHealth(), getRecent()]);
   const rows = recent.ingests;
 
@@ -32,7 +44,7 @@ export default async function Dashboard() {
 
   return (
     <>
-      <Nav current="/" />
+      <Nav current="/" user={user} />
       <div className="admin">
         <div className="head">
           <h1>Orders</h1>

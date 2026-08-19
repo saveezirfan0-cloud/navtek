@@ -117,6 +117,40 @@ class Store:
             self.degraded = f"{type(exc).__name__} writing {table}"
             return []
 
+    def _patch(self, table, params, fields, prefer="return=representation"):
+        """Update rows matching params. Never raises, like _get and _post."""
+        if not self.enabled:
+            return []
+        try:
+            response = self._client.patch(
+                f"{self.url}/rest/v1/{table}",
+                params=params,
+                content=json.dumps(fields, default=str),
+                headers=self._headers(prefer),
+            )
+            if response.status_code >= 400:
+                self.degraded = f"HTTP {response.status_code} updating {table}"
+                return []
+            return response.json() if response.content else []
+        except Exception as exc:  # noqa: BLE001
+            self.degraded = f"{type(exc).__name__} updating {table}"
+            return []
+
+    def _delete(self, table, params):
+        if not self.enabled:
+            return False
+        try:
+            response = self._client.delete(
+                f"{self.url}/rest/v1/{table}", params=params, headers=self._headers()
+            )
+            if response.status_code >= 400:
+                self.degraded = f"HTTP {response.status_code} deleting from {table}"
+                return False
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.degraded = f"{type(exc).__name__} deleting from {table}"
+            return False
+
     def key_kind(self):
         """Classify the configured key without revealing it.
 
@@ -372,6 +406,15 @@ class Store:
         )
         return rows[0] if rows else None
 
+    def account_by_id(self, account_id):
+        if not self.enabled or not account_id:
+            return None
+        rows = self._get(
+            "installer_accounts",
+            {"id": f"eq.{account_id}", "select": "*", "limit": "1"},
+        )
+        return rows[0] if rows else None
+
     def upsert_accounts(self, rows):
         return self._post(
             "installer_accounts",
@@ -406,3 +449,90 @@ class Store:
             "jobs_cache",
             {"installer_account_id": f"eq.{installer_account_id}", "select": "*"},
         )
+
+    # -- app users & sessions ----------------------------------------------
+    #
+    # These back the web app's logins (0002_users.sql). Same never-raise
+    # posture as the rest of the class: callers distinguish "no such user"
+    # from "database down" via self.degraded, and index.py turns the latter
+    # into a clear error rather than a silent login failure.
+
+    def users_exist(self):
+        """True, False, or None when the database can't answer."""
+        if not self.enabled:
+            return None
+        self.degraded = None
+        rows = self._get("app_users", {"select": "id", "limit": "1"})
+        if self.degraded:
+            return None
+        return bool(rows)
+
+    def user_by_email(self, email):
+        rows = self._get(
+            "app_users", {"email": f"eq.{email}", "select": "*", "limit": "1"}
+        )
+        return rows[0] if rows else None
+
+    def user_by_id(self, user_id):
+        rows = self._get(
+            "app_users", {"id": f"eq.{user_id}", "select": "*", "limit": "1"}
+        )
+        return rows[0] if rows else None
+
+    def list_users(self):
+        return self._get("app_users", {"select": "*", "order": "created_at.asc"})
+
+    def create_user(self, fields):
+        rows = self._post("app_users", [fields])
+        return rows[0] if rows else None
+
+    def update_user(self, user_id, fields):
+        rows = self._patch("app_users", {"id": f"eq.{user_id}"}, fields)
+        return rows[0] if rows else None
+
+    def create_session(self, user_id, token_sha256, expires_at, user_agent=None):
+        rows = self._post(
+            "app_sessions",
+            [{
+                "user_id": user_id,
+                "token_sha256": token_sha256,
+                "expires_at": expires_at,
+                "user_agent": (user_agent or "")[:300] or None,
+            }],
+        )
+        return rows[0] if rows else None
+
+    def session_user(self, token_sha256):
+        """The user behind a live session token hash, or None."""
+        if not token_sha256:
+            return None
+        rows = self._get(
+            "app_sessions",
+            {
+                "token_sha256": f"eq.{token_sha256}",
+                "select": "expires_at,app_users(*)",
+                "limit": "1",
+            },
+        )
+        if not rows:
+            return None
+        session = rows[0]
+        expires = str(session.get("expires_at") or "")
+        try:
+            from datetime import datetime, timezone
+            when = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+            if when < datetime.now(timezone.utc):
+                self._delete("app_sessions", {"token_sha256": f"eq.{token_sha256}"})
+                return None
+        except ValueError:
+            return None
+        user = session.get("app_users")
+        if not user or not user.get("active"):
+            return None
+        return user
+
+    def delete_session(self, token_sha256):
+        return self._delete("app_sessions", {"token_sha256": f"eq.{token_sha256}"})
+
+    def delete_user_sessions(self, user_id):
+        return self._delete("app_sessions", {"user_id": f"eq.{user_id}"})

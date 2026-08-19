@@ -3,9 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Job } from "@/lib/api";
-import { submit } from "./actions";
+import { submitJob } from "./actions";
 
-export default function JobActions({ job, token }: { job: Job; token: string }) {
+/** `token` present → magic-link portal; absent → logged-in installer, whose
+ * session cookie is read server side by the action. */
+export default function JobActions({ job, token }: { job: Job; token?: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +19,7 @@ export default function JobActions({ job, token }: { job: Job; token: string }) 
   ) =>
     start(async () => {
       setError(null);
-      const result = await submit({ token, item_id: job.item_id, action, value });
+      const result = await submitJob({ token, item_id: job.item_id, action, value });
       if (result.ok) router.refresh();
       else setError(result.error);
     });

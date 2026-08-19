@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 
-from _lib import bootstrap, columns as columns_mod, config, portal  # noqa: E402
+from _lib import bootstrap, columns as columns_mod, config, portal, users  # noqa: E402
 from _lib.ingest import handle_webhook  # noqa: E402
 from _lib.monday import Monday, MondayError  # noqa: E402
 from _lib.store import Store  # noqa: E402
@@ -191,6 +191,299 @@ def vehicle_list(
     if not assets:
         raise HTTPException(404, "no vehicle list attached to this job")
     return {"name": assets[-1]["name"], "url": assets[-1]["public_url"], "expires_in": 3600}
+
+
+# --------------------------------------------------------------------------
+# Logins
+#
+# The web app's authentication. Only the Next.js server may call these — it
+# holds the portal shared secret. The browser holds an opaque session token in
+# an httpOnly cookie; what that token means is decided here, against the
+# database, never by anything the browser claims about itself.
+# --------------------------------------------------------------------------
+
+def _db_or_503(store):
+    if not store.enabled:
+        raise HTTPException(
+            503,
+            "The database isn't connected. Logins need SUPABASE_URL and "
+            "SUPABASE_SERVICE_KEY set in Vercel.",
+        )
+
+
+def _session_user(store, token):
+    """The user behind a session token, or 401. Vague on purpose — an invalid
+    session and an expired one look identical from outside."""
+    user = store.session_user(users.token_sha(token))
+    if not user:
+        raise HTTPException(401, "signed out")
+    return user
+
+
+def _require_admin(user):
+    if not user.get("is_admin"):
+        raise HTTPException(403, "Only an admin can do that.")
+
+
+@app.get("/api/py/auth/state")
+def auth_state(x_portal_secret: str = Header(default="")):
+    """Does the app have any users yet? Drives the first-run screen."""
+    _authorise(x_portal_secret)
+    store = Store()
+    return {
+        "database": store.ping(),
+        "users_exist": store.users_exist(),
+    }
+
+
+@app.post("/api/py/auth/bootstrap")
+def auth_bootstrap(
+    body: dict = Body(...),
+    x_portal_secret: str = Header(default=""),
+    x_setup_key: str = Header(default=""),
+):
+    """Create the first admin. Locked to the SETUP_KEY, and only while the
+    users table is empty — after that this endpoint does nothing, ever."""
+    _authorise(x_portal_secret)
+    _setup_guard(x_setup_key)
+    store = Store()
+    _db_or_503(store)
+    if store.users_exist() is not False:
+        raise HTTPException(
+            409,
+            "An admin already exists (or the users table is unreadable — run "
+            "supabase/migrations/0002_users.sql). Sign in instead.",
+        )
+    email = users.normalise_email(body.get("email", ""))
+    name = (body.get("name") or "").strip()
+    password = body.get("password") or ""
+    if not email or "@" not in email or not name:
+        raise HTTPException(400, "A name and a valid email are needed.")
+    problem = users.password_problem(password)
+    if problem:
+        raise HTTPException(400, problem)
+    row = store.create_user({
+        "email": email,
+        "name": name,
+        "password_hash": users.hash_password(password),
+        "is_admin": True,
+        "can_orders": True,
+        "can_installer": False,
+        "active": True,
+    })
+    if not row:
+        raise HTTPException(
+            503,
+            f"Could not create the user — {store.degraded or 'database write failed'}. "
+            "Has supabase/migrations/0002_users.sql been run?",
+        )
+    return _issue_session(store, row, body.get("user_agent"))
+
+
+def _issue_session(store, user_row, user_agent):
+    token = users.new_session_token()
+    session = store.create_session(
+        user_row["id"], users.token_sha(token), users.session_expiry(), user_agent
+    )
+    if not session:
+        raise HTTPException(
+            503, f"Could not start a session — {store.degraded or 'database write failed'}."
+        )
+    from datetime import datetime, timezone
+    store.update_user(
+        user_row["id"], {"last_login_at": datetime.now(timezone.utc).isoformat()}
+    )
+    return {"token": token, "user": users.public_user(user_row)}
+
+
+@app.post("/api/py/auth/login")
+def auth_login(body: dict = Body(...), x_portal_secret: str = Header(default="")):
+    _authorise(x_portal_secret)
+    store = Store()
+    _db_or_503(store)
+    email = users.normalise_email(body.get("email", ""))
+    password = body.get("password") or ""
+    row = store.user_by_email(email) if email else None
+    # Verify against a real hash even when the user is unknown, so the two
+    # failures take the same time and the response can stay identical.
+    stored = row["password_hash"] if row else users.hash_password("timing-decoy")
+    ok = users.verify_password(password, stored)
+    if not row or not ok or not row.get("active"):
+        raise HTTPException(401, "That email or password isn't right.")
+    return _issue_session(store, row, body.get("user_agent"))
+
+
+@app.post("/api/py/auth/logout")
+def auth_logout(body: dict = Body(default={}), x_portal_secret: str = Header(default="")):
+    _authorise(x_portal_secret)
+    Store().delete_session(users.token_sha((body or {}).get("token", "")))
+    return {"ok": True}
+
+
+@app.get("/api/py/auth/me")
+def auth_me(
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    _authorise(x_portal_secret)
+    return {"user": users.public_user(_session_user(Store(), x_session))}
+
+
+# -- user management (admin only) ------------------------------------------
+
+@app.get("/api/py/users")
+def users_list(
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    _authorise(x_portal_secret)
+    store = Store()
+    _require_admin(_session_user(store, x_session))
+    accounts = [
+        {"id": a["id"], "name": a["account_name"], "active": a.get("active")}
+        for a in store.installer_accounts(active_only=False)
+    ]
+    return {
+        "users": [users.public_user(u) for u in store.list_users()],
+        "installer_accounts": accounts,
+    }
+
+
+@app.post("/api/py/users")
+def users_create(
+    body: dict = Body(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    _authorise(x_portal_secret)
+    store = Store()
+    _require_admin(_session_user(store, x_session))
+
+    email = users.normalise_email(body.get("email", ""))
+    name = (body.get("name") or "").strip()
+    if not email or "@" not in email or not name:
+        raise HTTPException(400, "A name and a valid email are needed.")
+    if store.user_by_email(email):
+        raise HTTPException(409, "A user with that email already exists.")
+    problem = users.password_problem(body.get("password") or "")
+    if problem:
+        raise HTTPException(400, problem)
+
+    row = store.create_user({
+        "email": email,
+        "name": name,
+        "password_hash": users.hash_password(body["password"]),
+        "is_admin": bool(body.get("is_admin")),
+        "can_orders": bool(body.get("can_orders")),
+        "can_installer": bool(body.get("can_installer")),
+        "installer_account_id": body.get("installer_account_id") or None,
+        "active": True,
+    })
+    if not row:
+        raise HTTPException(
+            503, f"Could not create the user — {store.degraded or 'database write failed'}."
+        )
+    return {"user": users.public_user(row)}
+
+
+@app.post("/api/py/users/update")
+def users_update(
+    body: dict = Body(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    _authorise(x_portal_secret)
+    store = Store()
+    me = _session_user(store, x_session)
+    _require_admin(me)
+
+    user_id = body.get("id")
+    target = store.user_by_id(user_id) if user_id else None
+    if not target:
+        raise HTTPException(404, "No such user.")
+
+    fields = {}
+    for flag in ("is_admin", "can_orders", "can_installer", "active"):
+        if flag in body:
+            fields[flag] = bool(body[flag])
+    if "installer_account_id" in body:
+        fields["installer_account_id"] = body["installer_account_id"] or None
+    if "name" in body and (body["name"] or "").strip():
+        fields["name"] = body["name"].strip()
+    if body.get("password"):
+        problem = users.password_problem(body["password"])
+        if problem:
+            raise HTTPException(400, problem)
+        fields["password_hash"] = users.hash_password(body["password"])
+
+    # The one non-obvious rule: you cannot lock yourself out. Removing your own
+    # admin or deactivating yourself leaves an app nobody can administer.
+    if target["id"] == me["id"] and (
+        fields.get("is_admin") is False or fields.get("active") is False
+    ):
+        raise HTTPException(400, "You can't remove your own admin access or deactivate yourself.")
+
+    if not fields:
+        raise HTTPException(400, "Nothing to change.")
+    row = store.update_user(user_id, fields)
+    if not row:
+        raise HTTPException(
+            503, f"Could not save — {store.degraded or 'database write failed'}."
+        )
+    # Deactivating someone signs them out everywhere, immediately. A password
+    # change does the same — the person changing it is about to sign back in.
+    if fields.get("active") is False or "password_hash" in fields:
+        store.delete_user_sessions(user_id)
+    return {"user": users.public_user(row)}
+
+
+# -- the portal, for logged-in installer users ------------------------------
+
+def _installer_account(store, user):
+    if not (user.get("is_admin") or user.get("can_installer")):
+        raise HTTPException(403, "This login doesn't have installer access.")
+    account = store.account_by_id(user.get("installer_account_id"))
+    if not account:
+        raise HTTPException(
+            409,
+            "This login isn't linked to an installer account yet. Ask Navtek "
+            "to link one on the Users page.",
+        )
+    return account
+
+
+@app.get("/api/py/portal/my-jobs")
+def portal_my_jobs(
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    _authorise(x_portal_secret)
+    store = Store()
+    user = _session_user(store, x_session)
+    account = _installer_account(store, user)
+    return portal.jobs_for_account(Monday(), store, account)
+
+
+@app.post("/api/py/portal/my-action")
+def portal_my_action(
+    body: dict = Body(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    _authorise(x_portal_secret)
+    store = Store()
+    user = _session_user(store, x_session)
+    account = _installer_account(store, user)
+    try:
+        return portal.apply_action(
+            Monday(), store, account,
+            item_id=body["item_id"],
+            action=body["action"],
+            value=body.get("value"),
+            note=body.get("note"),
+        )
+    except KeyError as exc:
+        raise HTTPException(400, f"missing field: {exc}") from exc
 
 
 # --------------------------------------------------------------------------
