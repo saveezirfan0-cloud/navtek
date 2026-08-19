@@ -33,6 +33,13 @@ already caught don't get rebuilt:
 
 ## Prompt 1 — One Install item per order, always
 
+**Status: DONE** — `mapping.install_sites()` builds the uniform site list
+(single-site orders get one entry from the main delivery block), the ingest
+creates one install subitem per site for every Install Required = Yes order,
+and the portal renders one job per install item via `portal.install_items()`
+(orders that predate this stand in as their own single install item). Tests:
+Kane Civil → 1, multi-site → one per site, AGB / Southern Truck → 0.
+
 > In this repo, the order flow currently only creates Install items when
 > delivery mode is "Multiple Addresses", but the installer workflow (portal,
 > SLA clock, SMS) starts from "staff sets the Installer column on an install

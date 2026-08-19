@@ -1,4 +1,5 @@
 import Link from "next/link";
+import AutoRefresh from "@/app/AutoRefresh";
 import { getMyJobs, getPreviewJobs } from "@/lib/api";
 import { requireViewer, sessionToken } from "@/lib/auth";
 import JobCard from "@/app/jobs/JobCard";
@@ -72,6 +73,7 @@ export default async function MyJobs() {
 
   return (
     <div className="wrap">
+      <AutoRefresh seconds={60} />
       {previewing && (
         <div className="preview-bar">
           <span>
@@ -106,12 +108,12 @@ export default async function MyJobs() {
 
       {action_needed.length > 0 && <div className="sect">Action needed</div>}
       {action_needed.map((job) => (
-        <JobCard key={job.item_id} job={job} readOnly={previewing} />
+        <JobCard key={job.install_id ?? job.item_id} job={job} readOnly={previewing} />
       ))}
 
       {waiting.length > 0 && <div className="sect">Waiting on hardware</div>}
       {waiting.map((job) => (
-        <JobCard key={job.item_id} job={job} readOnly={previewing} />
+        <JobCard key={job.install_id ?? job.item_id} job={job} readOnly={previewing} />
       ))}
 
       {total === 0 && waiting.length === 0 && (
