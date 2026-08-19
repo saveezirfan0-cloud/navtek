@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { runStep, type Result } from "./actions";
 
-type StepKey = "plan" | "columns" | "installers" | "env" | "sync" | "webhook";
+type StepKey = "plan" | "columns" | "installers" | "env" | "sync" | "webhook" | "selftest";
 
 function Output({ result }: { result: Result | "running" | null }) {
   if (!result) return null;
@@ -165,13 +165,25 @@ export default function SetupSteps() {
 
       <div className="panel">
         <h2 className="step">
-          <span className="step-n">5</span>Test it
+          <span className="step-n">5</span>Check everything works
         </h2>
         <p>
-          Drop an eOrder into the <a href="/try">file tester</a> to check the
-          parser reads it — that writes nothing anywhere. Then drop the same
-          file onto the eOrder column of a row in TN Orders and watch the row
-          fill in.
+          Checks the monday token, the board, the columns, the parser, the
+          webhook and the database, and says which are working. Read-only —
+          it changes nothing.
+        </p>
+        <button
+          className="act"
+          disabled={results.selftest === "running"}
+          onClick={() => go("selftest")}
+        >
+          Run the check
+        </button>
+        <Output result={results.selftest ?? null} />
+        <p style={{ marginTop: 14, marginBottom: 0, fontSize: 14 }}>
+          All green? Drop an eOrder onto the eOrder column of a row in TN Orders
+          and watch it fill in. To check a file without touching the board, use
+          the <a href="/try">file tester</a>.
         </p>
       </div>
 

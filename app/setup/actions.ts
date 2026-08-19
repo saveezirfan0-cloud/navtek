@@ -19,12 +19,14 @@ const BASE = () => {
 export type Result = { ok: true; data: unknown } | { ok: false; error: string };
 
 export async function runStep(
-  step: "plan" | "columns" | "installers" | "env" | "sync" | "webhook",
+  step: "plan" | "columns" | "installers" | "env" | "sync" | "webhook" | "selftest",
   body?: Record<string, unknown>,
 ): Promise<Result> {
-  const method = ["plan", "env"].includes(step) ? "GET" : "POST";
+  const method = ["plan", "env", "selftest"].includes(step) ? "GET" : "POST";
+  // selftest is not a setup mutation; it lives at the top level.
+  const path = step === "selftest" ? "/api/py/selftest" : `/api/py/setup/${step}`;
   try {
-    const response = await fetch(`${BASE()}/api/py/setup/${step}`, {
+    const response = await fetch(`${BASE()}${path}`, {
       method,
       headers: {
         "X-Setup-Key": process.env.SETUP_KEY ?? "",

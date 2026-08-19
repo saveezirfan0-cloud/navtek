@@ -20,8 +20,41 @@ MONDAY_TOKEN = os.environ.get("MONDAY_TOKEN", "")
 MONDAY_API_URL = os.environ.get("MONDAY_API_URL", "https://api.monday.com/v2")
 MONDAY_API_VERSION = os.environ.get("MONDAY_API_VERSION", "2024-10")
 
+# Supabase credentials, as an ordered list of candidate pairs.
+#
+# A URL and a key have to come from the SAME project, and it is easy to end up
+# with one of each from two projects — the error is identical to a wrong key,
+# so guessing between them wastes a lot of time. Setting a second pair lets the
+# app try both and report which one actually works.
+#
+#   SUPABASE_URL   / SUPABASE_SERVICE_KEY     (primary)
+#   SUPABASE_URL_2 / SUPABASE_SERVICE_KEY_2   (optional alternative)
+#
+# SUPABASE_SECRET_KEY is accepted as an alias, since that is what the Supabase
+# dashboard now calls it.
+def supabase_candidates():
+    pairs = [
+        ("SUPABASE_SERVICE_KEY",
+         os.environ.get("SUPABASE_URL", ""),
+         os.environ.get("SUPABASE_SERVICE_KEY", "")),
+        ("SUPABASE_SECRET_KEY",
+         os.environ.get("SUPABASE_URL", ""),
+         os.environ.get("SUPABASE_SECRET_KEY", "")),
+        ("SUPABASE_SERVICE_KEY_2",
+         os.environ.get("SUPABASE_URL_2") or os.environ.get("SUPABASE_URL", ""),
+         os.environ.get("SUPABASE_SERVICE_KEY_2", "")),
+    ]
+    seen, out = set(), []
+    for name, url, key in pairs:
+        if url and key and (url, key) not in seen:
+            seen.add((url, key))
+            out.append({"name": name, "url": url.rstrip("/"), "key": key})
+    return out
+
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")  # sb_secret_... or legacy service_role
+_first = supabase_candidates()
+SUPABASE_SERVICE_KEY = _first[0]["key"] if _first else ""
 
 # Shared secret between the portal (Next.js) and this service. The portal is the
 # only client allowed to call /portal/*; it holds this, the browser never does.
@@ -167,9 +200,9 @@ ASSET_FETCH_TIMEOUT = int(os.environ.get("ASSET_FETCH_TIMEOUT", "30"))
 
 def missing_secrets():
     """Return the names of required secrets that are not set."""
-    required = {
-        "MONDAY_TOKEN": MONDAY_TOKEN,
-        "SUPABASE_URL": SUPABASE_URL,
-        "SUPABASE_SERVICE_KEY": SUPABASE_SERVICE_KEY,
-    }
-    return [name for name, value in required.items() if not value]
+    missing = []
+    if not MONDAY_TOKEN:
+        missing.append("MONDAY_TOKEN")
+    if not supabase_candidates():
+        missing.append("SUPABASE_URL + SUPABASE_SERVICE_KEY")
+    return missing

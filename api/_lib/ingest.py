@@ -79,12 +79,30 @@ def handle_webhook(payload, monday=None, store=None):
     if not item_id:
         return {"ok": False, "reason": "no pulseId in payload"}
 
+    result = {"item_id": item_id, "board_id": board_id}
+
+    try:
+        return _run(monday, store, payload, result, started)
+    except Exception as exc:  # noqa: BLE001
+        # Anything unforeseen still gets reported on the row. A webhook that
+        # 500s silently looks identical to one that never fired, and monday
+        # leaves the run showing "In progress" forever.
+        detail = f"{type(exc).__name__}: {exc}"
+        _fail(monday, board_id, item_id,
+              f"Something went wrong reading this eOrder.<br>{detail}")
+        return {**result, "ok": False, "reason": detail}
+
+
+def _run(monday, store, payload, result, started):
+    event = payload.get("event") or {}
+    item_id = event.get("pulseId")
+    board_id = int(event.get("boardId") or config.ORDERS_BOARD_ID)
     cols = columns_mod.resolved(monday, board_id)
+
     file_column = cols.get("eorder_file") or event.get("columnId")
     if not file_column:
-        return {"ok": False, "reason": "eOrder file column id is not configured"}
-
-    result = {"item_id": item_id, "board_id": board_id}
+        return {**result, "ok": False,
+                "reason": "no file column called 'eOrder' on this board"}
 
     try:
         assets = monday.asset_urls(item_id, file_column)
@@ -208,6 +226,7 @@ def handle_webhook(payload, monday=None, store=None):
 
     return {
         **result, "ok": True, "status": status, "fields_written": len(values),
+        "database": store.degraded or "ok",
         "warnings": warnings, "changes": changes, "duration_ms": duration_ms,
     }
 

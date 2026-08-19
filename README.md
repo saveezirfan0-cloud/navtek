@@ -106,9 +106,19 @@ there (§3.3).
 ## Testing
 
 ```bash
-python -m pytest tests/ -q       # 23 tests, no network, no parser needed
+python -m pytest tests/ -q         # 37 tests, no network, no credentials
 python scripts/verify.py samples/  # extraction gate against real eOrders
 ```
+
+`tests/test_ingest.py` runs the real ingest path — real eOrder files, real
+parser, real mapping — against a fake monday and a fake database, and encodes
+the brief's acceptance criteria directly: a new order populates and reads
+clean, the same file twice is skipped, a revision reports what changed, a
+non-eOrder fails without touching anything else, an order with nothing to ship
+is not an error, ACV appears only on new-revenue reasons, a value already in
+monday is never overwritten, and the order still lands when the database is
+down. Each of those was verified by hand once and then quietly broken by a
+later change; that is why they are tests now.
 
 Or use `/try` in the browser, which needs no local setup at all.
 

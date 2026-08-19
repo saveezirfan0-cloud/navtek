@@ -21,11 +21,31 @@ def sha256(data: bytes) -> str:
 
 
 class Store:
+    # Which candidate pair last worked, remembered across calls in a warm
+    # function so the fallback costs one probe, not one per request.
+    _working = None
+
     def __init__(self, url=None, key=None, timeout=15):
-        self.url = (url or config.SUPABASE_URL).rstrip("/")
-        self.key = key or config.SUPABASE_SERVICE_KEY
+        if url or key:
+            self.candidates = [{"name": "explicit",
+                                "url": (url or "").rstrip("/"), "key": key or ""}]
+        else:
+            self.candidates = config.supabase_candidates()
+            if Store._working is not None:
+                # Put the known-good pair first.
+                self.candidates.sort(key=lambda c: c["name"] != Store._working)
+
+        first = self.candidates[0] if self.candidates else {"url": "", "key": "", "name": None}
+        self.url, self.key, self.source = first["url"], first["key"], first["name"]
         self.enabled = bool(self.url and self.key)
+        self._timeout = timeout
         self._client = httpx.Client(timeout=timeout) if self.enabled else None
+
+    def _use(self, candidate):
+        self.url, self.key, self.source = candidate["url"], candidate["key"], candidate["name"]
+        self.enabled = bool(self.url and self.key)
+        if self._client is None and self.enabled:
+            self._client = httpx.Client(timeout=self._timeout)
 
     def _headers(self, prefer=None):
         headers = {
@@ -37,25 +57,55 @@ class Store:
             headers["Prefer"] = prefer
         return headers
 
+    # Set once if the database turns out to be unusable, so a broken key
+    # produces one degraded run rather than an exception per call.
+    degraded = None
+
     def _get(self, table, params):
+        """Read, and never raise.
+
+        Reads used to raise on any error. Because the first thing an ingest
+        does is a duplicate check, a bad Supabase key took down the whole
+        order flow — monday never got written and the drop appeared to do
+        nothing. The database is a ledger, not the point: losing it should
+        cost the duplicate check and the history, never the order.
+
+        Returning [] is the safe direction for every caller here. An unknown
+        duplicate gets reprocessed (which rewrites the same values), an
+        unknown previous parse skips the change diff, and no installer
+        accounts means allocation is skipped rather than guessed.
+        """
         if not self.enabled:
             return []
-        response = self._client.get(
-            f"{self.url}/rest/v1/{table}", params=params, headers=self._headers()
-        )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = self._client.get(
+                f"{self.url}/rest/v1/{table}", params=params, headers=self._headers()
+            )
+            if response.status_code >= 400:
+                self.degraded = f"HTTP {response.status_code} reading {table}"
+                return []
+            return response.json()
+        except Exception as exc:  # noqa: BLE001
+            self.degraded = f"{type(exc).__name__} reading {table}"
+            return []
 
     def _post(self, table, rows, prefer="return=representation"):
+        """Write, and never raise. Same reasoning as _get."""
         if not self.enabled:
             return []
-        response = self._client.post(
-            f"{self.url}/rest/v1/{table}",
-            content=json.dumps(rows, default=str),
-            headers=self._headers(prefer),
-        )
-        response.raise_for_status()
-        return response.json() if response.content else []
+        try:
+            response = self._client.post(
+                f"{self.url}/rest/v1/{table}",
+                content=json.dumps(rows, default=str),
+                headers=self._headers(prefer),
+            )
+            if response.status_code >= 400:
+                self.degraded = f"HTTP {response.status_code} writing {table}"
+                return []
+            return response.json() if response.content else []
+        except Exception as exc:  # noqa: BLE001
+            self.degraded = f"{type(exc).__name__} writing {table}"
+            return []
 
     def key_kind(self):
         """Classify the configured key without revealing it.
@@ -89,15 +139,31 @@ class Store:
         )
 
     def ping(self):
-        """Is the database actually reachable and are the tables there?
+        """Try each candidate pair and keep the first that works.
+
+        Returns the result for the working pair, or for the last one tried.
 
         Distinguishes three states the dashboard would otherwise collapse into
         one unhelpful "not connected": no credentials, credentials that don't
         work, and credentials that work against a database with no schema.
         """
-        if not self.enabled:
+        if not self.candidates:
             return {"ok": False, "state": "not_configured",
-                    "detail": "SUPABASE_URL or SUPABASE_SERVICE_KEY is not set"}
+                    "detail": "SUPABASE_URL and SUPABASE_SERVICE_KEY are not set"}
+
+        last = None
+        for candidate in self.candidates:
+            self._use(candidate)
+            last = self._ping_once()
+            last["tried"] = candidate["name"]
+            if last["ok"]:
+                Store._working = candidate["name"]
+                return last
+        if len(self.candidates) > 1:
+            last["also_tried"] = [c["name"] for c in self.candidates]
+        return last
+
+    def _ping_once(self):
         try:
             response = self._client.get(
                 f"{self.url}/rest/v1/eorder_ingests",
@@ -122,7 +188,8 @@ class Store:
         if response.status_code >= 400:
             return {"ok": False, "state": "error",
                     "detail": f"HTTP {response.status_code}: {response.text[:200]}"}
-        return {"ok": True, "state": "ready", "key_looks_like": self.key_kind()}
+        return {"ok": True, "state": "ready", "key_looks_like": self.key_kind(),
+                "using": self.source}
 
     # -- idempotency -------------------------------------------------------
 

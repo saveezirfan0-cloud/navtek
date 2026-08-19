@@ -74,6 +74,19 @@ class Monday:
 
         raise MondayError(f"monday unavailable after {retries} attempts: {last_error}")
 
+    def me(self):
+        """Who the token belongs to. The cheapest possible auth check."""
+        data = self.gql("query { me { name email } }")
+        return data.get("me") or {}
+
+    def board_name(self, board_id):
+        data = self.gql(
+            "query ($b: [ID!]) { boards (ids: $b) { id name } }",
+            {"b": [str(board_id)]},
+        )
+        boards = data.get("boards") or []
+        return boards[0]["name"] if boards else None
+
     # -- reads -------------------------------------------------------------
 
     def board_columns(self, board_id):

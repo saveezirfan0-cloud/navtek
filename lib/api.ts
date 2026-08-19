@@ -109,6 +109,7 @@ export type Health = {
   missing_secrets: string[];
   config_warnings?: string[];
   unmapped_columns: string[];
+  unmapped_optional?: string[];
   orders_board: number;
   write_order_type: boolean;
 };

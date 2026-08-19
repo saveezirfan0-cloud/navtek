@@ -291,7 +291,26 @@ only**, so the existing DocuSign `files` column carries on being ignored, and
 pressing it twice reuses the existing webhook rather than registering a second
 one that would process every file twice.
 
-**5 — Test it.** See Part 8.
+**5 — Check everything works.** Press **Run the check**. It tests the monday
+token, the board, the columns, the parser, the webhook and the database, and
+tells you which are working. It is read-only.
+
+The database line may say `warn` rather than `PASS`. That is not blocking:
+orders are still read and written to monday. What is lost without it is the
+duplicate check and the history on the Orders page.
+
+**If the database is rejected**, the likely cause is a URL and key from two
+different Supabase projects — a mismatched pair fails exactly like a wrong key,
+which makes it hard to tell them apart. Set a second pair and the app will try
+both and tell you which works:
+
+| Name | Value |
+|---|---|
+| `SUPABASE_URL_2` | the project URL, copied fresh |
+| `SUPABASE_SERVICE_KEY_2` | the Secret key from **that same project** |
+
+Redeploy, then run the check again — `database.using` names the pair that
+worked, and you can delete the other.
 
 ---
 

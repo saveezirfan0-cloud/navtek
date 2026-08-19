@@ -67,6 +67,7 @@ def health():
         "config_warnings": config.CONFIG_WARNINGS,
         "database": Store().ping(),
         "unmapped_columns": columns_mod.unmapped(cols),
+        "unmapped_optional": columns_mod.unmapped_optional(cols),
         "column_ids": cols,
         "column_ids_from": source,
         "orders_board": config.ORDERS_BOARD_ID,
@@ -282,6 +283,86 @@ def setup_webhook(body: dict = Body(default={}), x_setup_key: str = Header(defau
         return bootstrap.register_webhook(Monday(), f"{url}/api/py/eorder")
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/py/selftest")
+def selftest():
+    """Check every part of the order flow and say which are working.
+
+    Deliberately read-only: it touches nothing on the board and writes nothing
+    to the database. This is the "is it actually working" answer, in one place,
+    rather than five endpoints and a guess.
+    """
+    checks = []
+
+    def check(name, fn, needed=True):
+        try:
+            ok, detail = fn()
+        except Exception as exc:  # noqa: BLE001
+            ok, detail = False, f"{type(exc).__name__}: {exc}"
+        checks.append({"check": name, "ok": ok, "required": needed, "detail": detail})
+        return ok
+
+    monday = Monday()
+
+    def monday_auth():
+        who = monday.me()
+        return bool(who.get("name")), f"connected as {who.get('name')}" if who else "no response"
+
+    def board_ok():
+        name = monday.board_name(config.ORDERS_BOARD_ID)
+        return bool(name), f"{name} ({config.ORDERS_BOARD_ID})" if name else "board not found"
+
+    def columns_ok():
+        cols = columns_mod.resolved(monday, force=True)
+        missing = columns_mod.unmapped(cols)
+        optional = columns_mod.unmapped_optional(cols)
+        if missing:
+            return False, f"missing: {', '.join(missing)} — run step 2"
+        note = f", {len(optional)} production-only column(s) absent" if optional else ""
+        return True, f"all {len(cols) - len(optional)} mapped{note}"
+
+    def webhook_ok():
+        column_id = bootstrap.eorder_column_id(monday)
+        if not column_id:
+            return False, "no file column called 'eOrder' — run step 2"
+        for hook in monday.webhooks(config.ORDERS_BOARD_ID):
+            if column_id in str(hook.get("config") or ""):
+                return True, f"webhook {hook['id']} on the eOrder column"
+        return False, "not registered — run step 4"
+
+    def parser_ok():
+        from _lib import eorder_parser
+        return (
+            bool(getattr(eorder_parser, "ACV_ORDER_REASONS", None)),
+            "loaded" if callable(getattr(eorder_parser, "parse", None))
+            else "placeholder — upload the real eorder_parser.py",
+        )
+
+    def database_ok():
+        probe = Store().ping()
+        return probe["ok"], probe.get("detail") or probe.get("state")
+
+    check("monday token", monday_auth)
+    check("orders board", board_ok)
+    check("board columns", columns_ok)
+    check("parser", parser_ok)
+    check("webhook", webhook_ok)
+    check("database", database_ok, needed=False)
+
+    blocking = [c for c in checks if c["required"] and not c["ok"]]
+    optional_failed = [c for c in checks if not c["required"] and not c["ok"]]
+
+    if blocking:
+        verdict = f"Not working yet — {blocking[0]['check']}: {blocking[0]['detail']}"
+    elif optional_failed:
+        verdict = ("Orders will be read and written to monday. "
+                   f"{optional_failed[0]['check']} is not working, which costs the "
+                   "duplicate check and the history, but not the order.")
+    else:
+        verdict = "Everything is working."
+
+    return {"ok": not blocking, "verdict": verdict, "checks": checks}
 
 
 @app.get("/api/py/recent")

@@ -46,6 +46,31 @@ ORDER_COLUMNS = [
 
 INSTALLER_LINK_COLUMN = ("installer", "Installer", "board_relation")
 
+# Columns that already existed on the production board before this app.
+#
+# On production these resolve from their pinned IDs and this map is never
+# consulted. It matters on any other board — a test copy, or production after a
+# rebuild — where those IDs don't exist. Several candidate titles per column
+# because the exact wording isn't certain; an exact title match on a compatible
+# type binds, anything else leaves the column unmapped, which is the same
+# outcome as not trying. This map is lookup-only: nothing here is ever created,
+# so a wrong guess cannot add a duplicate column to a live board.
+LEGACY_COLUMNS = [
+    ("opportunity_id", ["OPPORTUNITY ID #", "Opportunity ID #", "Opportunity ID",
+                        "Opportunity Field ID"], "text"),
+    ("order_type", ["Order Type"], "status"),
+    ("platform", ["Platform"], "status"),
+    ("migration_required", ["Migration Required", "Migration Required?",
+                            "Migration"], "status"),
+    ("order_date", ["ORDER PLACED", "Order Placed", "Order Date",
+                    "Date Ordered"], "date"),
+    ("dealer_commission", ["Total Commission", "Dealer Commission",
+                           "Commission"], "numbers"),
+    ("install_value", ["Install Value", "Installation Value",
+                       "Install $"], "numbers"),
+    ("acv", ["ACV", "Annual Contract Value"], "numbers"),
+]
+
 # monday reports some types under a different name from the one you create them
 # with, and has renamed a couple over the years. Matching on title alone would
 # happily bind a text column called "eOrder" to the file column; matching on an
@@ -142,6 +167,16 @@ def resolved(monday, board_id=None, force=False):
         if found and _compatible(found["type"], ctype):
             columns[key] = found["id"]
 
+    # Pre-existing production columns, by any of their candidate titles.
+    for key, titles, ctype in LEGACY_COLUMNS:
+        if columns.get(key):
+            continue
+        for title in titles:
+            found = by_title.get(title.lower())
+            if found and _compatible(found["type"], ctype):
+                columns[key] = found["id"]
+                break
+
     # Every known key, resolved or None. Deliberately NOT merged back over
     # config.COLUMNS — doing that reinstates the very IDs just dropped as
     # stale, which is exactly the bug this line replaces.
@@ -150,8 +185,20 @@ def resolved(monday, board_id=None, force=False):
     return full
 
 
+# Columns this app creates and depends on. Everything else in the map is a
+# column that already existed on the production board — useful when present,
+# absent on a fresh or test board, and not something setup can fix.
+MANAGED = {key for key, _, _, _ in ORDER_COLUMNS} | {INSTALLER_LINK_COLUMN[0]}
+
+
 def unmapped(columns):
-    return [key for key, value in columns.items() if not value]
+    """Only the columns whose absence is actually a problem."""
+    return [k for k, v in columns.items() if not v and k in MANAGED]
+
+
+def unmapped_optional(columns):
+    """Pre-existing production columns not present on this board."""
+    return [k for k, v in columns.items() if not v and k not in MANAGED]
 
 
 def clear_cache():
