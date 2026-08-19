@@ -57,6 +57,37 @@ class Store:
         response.raise_for_status()
         return response.json() if response.content else []
 
+    def key_kind(self):
+        """Classify the configured key without revealing it.
+
+        "Rejected" is ambiguous — it could be the wrong key or a bad one. The
+        key's own prefix says which, and legacy JWTs carry their role in the
+        payload, so this can name the mistake without printing a secret.
+        """
+        key = self.key or ""
+        if not key:
+            return "not set"
+        if key.startswith("sb_secret_"):
+            return "secret key (correct type)"
+        if key.startswith("sb_publishable_"):
+            return "PUBLISHABLE key — wrong one. Copy the Secret key instead."
+        if key.startswith("eyJ"):
+            import base64
+            import json as _json
+            try:
+                payload = key.split(".")[1]
+                payload += "=" * (-len(payload) % 4)
+                role = _json.loads(base64.urlsafe_b64decode(payload)).get("role")
+            except Exception:  # noqa: BLE001
+                return "a JWT, but its contents could not be read"
+            if role == "service_role":
+                return "legacy service_role key (correct type)"
+            return f"legacy {role or 'unknown'} key — wrong one. Use service_role or a Secret key."
+        return (
+            f"unrecognised format (starts {key[:3]!r}, {len(key)} chars). "
+            "Expected a key beginning sb_secret_."
+        )
+
     def ping(self):
         """Is the database actually reachable and are the tables there?
 
@@ -77,10 +108,13 @@ class Store:
             return {"ok": False, "state": "unreachable", "detail": f"{type(exc).__name__}: {exc}"}
 
         if response.status_code in (401, 403):
-            return {"ok": False, "state": "rejected", "detail":
-                    "Supabase rejected the key. This must be the SECRET key "
-                    "(sb_secret_… or legacy service_role), not the publishable "
-                    "or anon key — only the secret key can read these tables."}
+            return {"ok": False, "state": "rejected",
+                    "key_looks_like": self.key_kind(),
+                    "detail":
+                    "Supabase rejected the key. It must be the SECRET key "
+                    "(sb_secret_… or legacy service_role) — only that can read "
+                    "these tables. If the type below is already correct, the "
+                    "value is truncated or from a different project."}
         if response.status_code == 404:
             return {"ok": False, "state": "no_tables", "detail":
                     "Connected, but the eorder_ingests table does not exist. "
@@ -88,7 +122,7 @@ class Store:
         if response.status_code >= 400:
             return {"ok": False, "state": "error",
                     "detail": f"HTTP {response.status_code}: {response.text[:200]}"}
-        return {"ok": True, "state": "ready"}
+        return {"ok": True, "state": "ready", "key_looks_like": self.key_kind()}
 
     # -- idempotency -------------------------------------------------------
 
