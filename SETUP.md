@@ -150,6 +150,10 @@ GitHub replaces the placeholder. Click the file to confirm it now begins
 3. Click the **copy icon** at the top right of the file
 4. Paste into the SQL editor and click **Run**
 5. Repeat with `0002_users.sql` — that one creates the login tables
+6. Repeat with `0003_grants.sql` — that one gives the service key access to
+   the tables. On most projects it is already true and the script changes
+   nothing; on projects where it isn't, every key fails with "permission
+   denied" until this runs.
 
 You want **Success. No rows returned.** That is what a successful table
 creation looks like — it isn't an error.
@@ -331,8 +335,12 @@ duplicate check and the history on the Orders page.
 **If the database is rejected**, open `/api/py/health` and read the
 `database` block — it now carries Supabase's own explanation in
 `supabase_said`, and `key_looks_like` names what kind of key it was actually
-given. Three causes cover nearly every case:
+given. Four causes cover nearly every case:
 
+- **`supabase_said` says `permission denied for table …`.** The key is fine —
+  it was accepted, and then the database refused the role because its grants
+  are missing. No key change helps; run `supabase/migrations/0003_grants.sql`
+  in the SQL Editor (health calls this state `no_grants`).
 - **`supabase_said` mentions legacy keys being disabled.** The project
   refuses `service_role` keys no matter how correctly they're copied. Copy
   the **`sb_secret_…`** key instead (Project Settings → API Keys → Secret
@@ -468,6 +476,7 @@ long it took.
 | Row fills in but eOrder Status stays blank | The column was renamed. It must be a **Status** column titled exactly `eOrder Status`. Press step 3 to confirm what the app can see. |
 | An Update says `This status label doesn't exist` | The status column's labels differ from what the app writes. The app now reads the board's own labels and matches against them (emoji and case don't matter), so this only remains possible if a label like `Read` was renamed to something else entirely — rename it back, or expect that write to be skipped with a warning in the Update. |
 | Database `rejected` with a correct-looking key | Read `database.supabase_said` on `/api/py/health` — it is Supabase's own reason. Legacy keys disabled → use the `sb_secret_…` key. Signature cut short → re-paste the whole key. See Part 6 step 5. |
+| Database says `no_grants` / `permission denied for table …` | The key works; the database role lost its table grants. Run `supabase/migrations/0003_grants.sql` in the SQL Editor. Keys and environment variables are not the problem. |
 | Portal says "This link no longer works" | Step 5 hasn't been run since that account was added, or the token changed. |
 | Portal loads but shows no jobs | Nothing is allocated to that account. Set the **Installer** column on a row in TN Orders. |
 | `NotImplementedError` about the parser | Part 2. |

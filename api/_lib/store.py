@@ -283,12 +283,29 @@ class Store:
             # the difference between guessing and knowing. Discarding it here
             # is what made this failure cost days instead of minutes.
             server_said = self._server_message(response)
+            lowered = (server_said or "").lower()
+            # "Permission denied" is Postgres speaking, not the auth layer —
+            # the key was ACCEPTED and then the service_role role was refused
+            # table access because its grants are missing. Every key of every
+            # generation fails identically until the grants are restored, which
+            # is indistinguishable from a wrong key unless this is said.
+            if "permission denied" in lowered:
+                return {"ok": False, "state": "no_grants",
+                        "key_looks_like": self.key_kind(),
+                        "supabase_said": server_said,
+                        "detail": (
+                            "The key is fine — Supabase accepted it. The "
+                            "database itself refused access: the service role "
+                            "holds no grants on these tables, so every key "
+                            "fails the same way. Run supabase/migrations/"
+                            "0003_grants.sql in the Supabase SQL Editor; no "
+                            "environment variable needs to change."
+                        )}
             mismatch = self.project_mismatch()
             if mismatch:
                 return {"ok": False, "state": "wrong_project",
                         "key_looks_like": self.key_kind(),
                         "supabase_said": server_said, "detail": mismatch}
-            lowered = (server_said or "").lower()
             if "legacy" in lowered and ("disabled" in lowered or "expired" in lowered
                                         or "revoked" in lowered):
                 detail = (

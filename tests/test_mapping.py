@@ -371,6 +371,36 @@ def test_ping_surfaces_supabases_own_error_message():
     assert "legacy" in probe["detail"].lower()
 
 
+def test_permission_denied_is_named_a_grants_problem_not_a_key_problem():
+    """Production, 19 Aug 2026: a valid service_role key from the confirmed
+    project got 'permission denied for table eorder_ingests' — Postgres
+    refusing the role, after auth succeeded. The advice 'copy a fresh key'
+    is wrong for this case and cost a round of key rotation that changed
+    nothing. It must be told apart from a rejected key."""
+    from _lib.store import Store
+
+    class Refusal:
+        status_code = 403
+        text = ('{"code":"42501","details":null,"hint":null,'
+                '"message":"permission denied for table eorder_ingests"}')
+        content = text.encode()
+
+        def json(self):
+            return {"code": "42501", "details": None, "hint": None,
+                    "message": "permission denied for table eorder_ingests"}
+
+    class Client:
+        def get(self, *args, **kwargs):
+            return Refusal()
+
+    store = Store("https://abcdefgh.supabase.co", _legacy_jwt())
+    store._client = Client()
+    probe = store._ping_once()
+    assert probe["state"] == "no_grants"
+    assert "0003_grants.sql" in probe["detail"]
+    assert "key is fine" in probe["detail"].lower()
+
+
 def test_supabase_credentials_survive_pasted_whitespace_and_quotes(monkeypatch):
     from _lib import config as config_mod
     monkeypatch.setenv("SUPABASE_URL", " https://abcdefgh.supabase.co\n")
