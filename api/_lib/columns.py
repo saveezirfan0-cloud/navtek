@@ -111,6 +111,12 @@ def _parse_labels(settings_str):
         settings = json.loads(settings_str or "{}")
     except (TypeError, ValueError):
         return []
+    # monday can echo "null" or another non-object here; json.loads accepts
+    # those happily and the .get below would then raise — inside resolved(),
+    # OUTSIDE ingest's guarded block, so one odd column would fail every
+    # ingest on the board.
+    if not isinstance(settings, dict):
+        return []
     labels = settings.get("labels")
     if isinstance(labels, dict):
         return [str(v) for v in labels.values() if v not in (None, "")]

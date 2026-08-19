@@ -339,6 +339,19 @@ def test_an_upload_still_runs_when_files_are_present():
     assert monday.renamed.startswith("KANE CIVIL")
 
 
+def test_odd_column_settings_never_crash_label_parsing():
+    """json.loads accepts "null" and "[]"; .get on the result raised inside
+    resolved(), outside ingest's guards — one odd status column on the board
+    failed every ingest. Found in adversarial review before it shipped far."""
+    from _lib.columns import _parse_labels
+    assert _parse_labels(None) == []
+    assert _parse_labels("") == []
+    assert _parse_labels("null") == []
+    assert _parse_labels("[]") == []
+    assert _parse_labels("not json at all") == []
+    assert _parse_labels('{"labels":{"1":"Read","2":null}}') == ["Read"]
+
+
 # -- status labels are the board's, not the code's (incident of 19 Aug 2026) --
 
 class EmojiBoard(FakeMonday):
