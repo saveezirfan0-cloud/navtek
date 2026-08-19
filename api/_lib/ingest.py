@@ -210,9 +210,6 @@ def _run(monday, store, payload, result, started):
     # A revised eOrder is allowed to correct fields; a first read only fills gaps.
     values = proposed if changes else mapping.merge_preserving(proposed, existing_text)
 
-    if cols.get("eorder_status"):
-        values[cols["eorder_status"]] = mapping.v_status(status)
-
     # Align every status label to the board's real label list. One label the
     # board doesn't have would fail the whole mutation — every field lost over
     # a stripped emoji. A label that can't be aligned is dropped and reported,
@@ -222,14 +219,35 @@ def _run(monday, store, payload, result, started):
     except Exception:  # noqa: BLE001 - alignment is a guard, never a blocker
         board_labels = {}
     values, dropped = mapping.align_status_values(values, board_labels)
-    if dropped:
-        key_by_id = {v: k for k, v in cols.items() if v}
-        for column_id, label, available in dropped:
-            warnings.append(
-                f"label '{label}' does not exist on the "
-                f"{key_by_id.get(column_id, column_id)} column "
-                f"(board has: {', '.join(available) or 'none'}) — not written"
-            )
+    warnings.extend(_dropped_warnings(dropped, cols))
+
+    # --- multi-site subitems (§8.4) ------------------------------------
+    #
+    # Contained: subitems live on their own board with their own column IDs,
+    # so a value write monday refuses must cost the subitem's values, not the
+    # order. Runs before the row write so a failure here still counts toward
+    # the status stamped on the row.
+    sites = parsed.get("multi_site") or []
+    if sites:
+        try:
+            result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"could not create per-site subitems: {exc}")
+
+    # A warning collected after validate() — a dropped label, a failed subitem
+    # — must still turn Read into Check. validate's own contract is
+    # "STATUS_CHECK if warnings else STATUS_READ", and the board filter on
+    # ⚠️ Check is the at-a-glance signal this column exists for; a clean flag
+    # over a silent field loss defeats it.
+    if warnings and status == mapping.STATUS_READ:
+        status = mapping.STATUS_CHECK
+
+    if cols.get("eorder_status"):
+        status_value, status_dropped = mapping.align_status_values(
+            {cols["eorder_status"]: mapping.v_status(status)}, board_labels
+        )
+        values.update(status_value)
+        warnings.extend(_dropped_warnings(status_dropped, cols))
 
     if values:
         monday.set_columns(board_id, target_id, values)
@@ -237,19 +255,6 @@ def _run(monday, store, payload, result, started):
     new_name = mapping.item_name(parsed)
     if new_name and existing.get("name") != new_name:
         monday.rename(board_id, target_id, new_name)
-
-    # --- multi-site subitems (§8.4) ------------------------------------
-    #
-    # Contained: subitems live on their own board with their own column IDs,
-    # so a value write monday refuses must cost the subitem's values, not the
-    # order — the main row is already written by this point, and a raised
-    # error here would report the whole ingest as failed anyway.
-    sites = parsed.get("multi_site") or []
-    if sites:
-        try:
-            result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"could not create per-site subitems: {exc}")
 
     # --- feedback -------------------------------------------------------
     monday.post_update(
@@ -277,6 +282,17 @@ def _run(monday, store, payload, result, started):
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+
+def _dropped_warnings(dropped, cols):
+    """One warning line per status label the board refused to accept."""
+    key_by_id = {v: k for k, v in cols.items() if v}
+    return [
+        f"label '{label}' does not exist on the "
+        f"{key_by_id.get(column_id, column_id)} column "
+        f"(board has: {', '.join(available) or 'none'}) — not written"
+        for column_id, label, available in dropped
+    ]
+
 
 def _acv_reason_known(order_reason):
     return str(order_reason).strip().lower() in {

@@ -104,26 +104,35 @@ _cache = {"at": 0.0, "board": None, "columns": None, "labels": {}}
 
 
 def _parse_labels(settings_str):
-    """The label list inside a status column's settings_str, or []."""
+    """The label list inside a status column's settings_str.
+
+    Returns a list when the labels are actually known (possibly empty), and
+    None when the settings shape isn't recognised. The difference matters:
+    the writer DROPS a label the column doesn't have, but passes through a
+    column it knows nothing about — so an unrecognised shape must read as
+    "unknown", never as "this column has no labels", or every status write to
+    it would be silently discarded.
+
+    monday can also echo "null" or another non-object here; json.loads accepts
+    those happily, and calling .get on the result raised inside resolved() —
+    OUTSIDE ingest's guarded block — so one odd column used to fail every
+    ingest on the board.
+    """
     import json
 
     try:
         settings = json.loads(settings_str or "{}")
     except (TypeError, ValueError):
-        return []
-    # monday can echo "null" or another non-object here; json.loads accepts
-    # those happily and the .get below would then raise — inside resolved(),
-    # OUTSIDE ingest's guarded block, so one odd column would fail every
-    # ingest on the board.
+        return None
     if not isinstance(settings, dict):
-        return []
+        return None
     labels = settings.get("labels")
     if isinstance(labels, dict):
         return [str(v) for v in labels.values() if v not in (None, "")]
     if isinstance(labels, list):  # dropdown-style settings, just in case
         return [str(l.get("name")) for l in labels
                 if isinstance(l, dict) and l.get("name")]
-    return []
+    return None
 
 
 def _compatible(reported, wanted):
@@ -164,11 +173,14 @@ def resolved(monday, board_id=None, force=False):
     live_ids = {column["id"] for column in live}
 
     # The real labels on every status column, for the writer to align against.
-    labels = {
-        column["id"]: _parse_labels(column.get("settings_str"))
-        for column in live
-        if column.get("type") in ("status", "color")
-    }
+    # A column whose labels can't be read is left out — absent means "nothing
+    # to check against", so writes to it pass through instead of being dropped.
+    labels = {}
+    for column in live:
+        if column.get("type") in ("status", "color"):
+            parsed_labels = _parse_labels(column.get("settings_str"))
+            if parsed_labels is not None:
+                labels[column["id"]] = parsed_labels
 
     # Drop any COLUMN_IDS override that doesn't exist on this board.
     #

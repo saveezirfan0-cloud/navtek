@@ -304,6 +304,13 @@ def auth_login(body: dict = Body(...), x_portal_secret: str = Header(default="")
     email = users.normalise_email(body.get("email", ""))
     password = body.get("password") or ""
     row = store.user_by_email(email) if email else None
+    # A lookup that failed because the database misbehaved must not be
+    # reported as a wrong password — that sends someone resetting credentials
+    # that were never the problem.
+    if row is None and store.degraded:
+        raise HTTPException(
+            503, f"Could not check the login — {store.degraded}. Try again shortly."
+        )
     # Verify against a real hash even when the user is unknown, so the two
     # failures take the same time and the response can stay identical.
     stored = row["password_hash"] if row else users.hash_password("timing-decoy")

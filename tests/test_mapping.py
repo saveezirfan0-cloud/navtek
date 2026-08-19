@@ -401,6 +401,42 @@ def test_permission_denied_is_named_a_grants_problem_not_a_key_problem():
     assert "key is fine" in probe["detail"].lower()
 
 
+def test_every_read_fails_over_to_the_working_credential_pair(monkeypatch):
+    """Only ping() used to try the other candidate pairs, so /health could
+    elect the working pair while a cold function instance served logins with
+    the dead first pair — intermittent 401s that look like flaky passwords
+    while the dashboard says the database is ready."""
+    from _lib.store import Store
+
+    monkeypatch.setenv("SUPABASE_URL", "https://abcdefgh.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", _legacy_jwt())      # dead pair
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_good")    # live pair
+    monkeypatch.setattr(Store, "_working", None)
+
+    class Response:
+        def __init__(self, code, body):
+            self.status_code, self._body = code, body
+            import json as _json
+            self.text = _json.dumps(body)
+            self.content = self.text.encode()
+
+        def json(self):
+            return self._body
+
+    class Client:
+        def get(self, url, params=None, headers=None):
+            if headers["apikey"] == "sb_secret_good":
+                return Response(200, [{"id": "1"}])
+            return Response(401, {"message": "Invalid API key"})
+
+    store = Store()
+    store._client = Client()
+    assert store.source == "SUPABASE_SERVICE_KEY"        # starts on the dead pair
+    rows = store._get("eorder_ingests", {"select": "id"})
+    assert rows == [{"id": "1"}]                          # failed over and retried
+    assert store.source == "SUPABASE_SECRET_KEY"
+
+
 def test_supabase_credentials_survive_pasted_whitespace_and_quotes(monkeypatch):
     from _lib import config as config_mod
     monkeypatch.setenv("SUPABASE_URL", " https://abcdefgh.supabase.co\n")

@@ -71,6 +71,24 @@ class Store:
     # produces one degraded run rather than an exception per call.
     degraded = None
 
+    def _send(self, request):
+        """Run a request; on an auth refusal, elect a working pair and retry.
+
+        Only ping() used to try the other credential pairs, so /health could
+        elect the working pair while a cold function instance served logins
+        and lookups with the dead first pair — intermittent 401s that read as
+        flaky passwords while the dashboard said the database was ready. Any
+        401/403 now runs the same election once; `request` re-reads self.url
+        and self._headers() when called, so the retry uses the elected pair.
+        Costs nothing when only one pair is configured.
+        """
+        response = request()
+        if response.status_code in (401, 403) and len(self.candidates) > 1:
+            failed_pair = self.source
+            if self.ping().get("ok") and self.source != failed_pair:
+                response = request()
+        return response
+
     def _get(self, table, params):
         """Read, and never raise.
 
@@ -88,9 +106,9 @@ class Store:
         if not self.enabled:
             return []
         try:
-            response = self._client.get(
+            response = self._send(lambda: self._client.get(
                 f"{self.url}/rest/v1/{table}", params=params, headers=self._headers()
-            )
+            ))
             if response.status_code >= 400:
                 self.degraded = f"HTTP {response.status_code} reading {table}"
                 return []
@@ -104,11 +122,11 @@ class Store:
         if not self.enabled:
             return []
         try:
-            response = self._client.post(
+            response = self._send(lambda: self._client.post(
                 f"{self.url}/rest/v1/{table}",
                 content=json.dumps(rows, default=str),
                 headers=self._headers(prefer),
-            )
+            ))
             if response.status_code >= 400:
                 self.degraded = f"HTTP {response.status_code} writing {table}"
                 return []
@@ -122,12 +140,12 @@ class Store:
         if not self.enabled:
             return []
         try:
-            response = self._client.patch(
+            response = self._send(lambda: self._client.patch(
                 f"{self.url}/rest/v1/{table}",
                 params=params,
                 content=json.dumps(fields, default=str),
                 headers=self._headers(prefer),
-            )
+            ))
             if response.status_code >= 400:
                 self.degraded = f"HTTP {response.status_code} updating {table}"
                 return []
@@ -140,9 +158,9 @@ class Store:
         if not self.enabled:
             return False
         try:
-            response = self._client.delete(
+            response = self._send(lambda: self._client.delete(
                 f"{self.url}/rest/v1/{table}", params=params, headers=self._headers()
-            )
+            ))
             if response.status_code >= 400:
                 self.degraded = f"HTTP {response.status_code} deleting from {table}"
                 return False

@@ -342,14 +342,20 @@ def test_an_upload_still_runs_when_files_are_present():
 def test_odd_column_settings_never_crash_label_parsing():
     """json.loads accepts "null" and "[]"; .get on the result raised inside
     resolved(), outside ingest's guards — one odd status column on the board
-    failed every ingest. Found in adversarial review before it shipped far."""
+    failed every ingest. Found in adversarial review before it shipped far.
+
+    Unrecognised shapes must come back None ("unknown"), not [] ("no
+    labels") — the writer drops labels a column doesn't have but passes
+    through columns it knows nothing about, so conflating the two would
+    silently discard every status write to such a column."""
     from _lib.columns import _parse_labels
-    assert _parse_labels(None) == []
-    assert _parse_labels("") == []
-    assert _parse_labels("null") == []
-    assert _parse_labels("[]") == []
-    assert _parse_labels("not json at all") == []
+    assert _parse_labels(None) is None
+    assert _parse_labels("") is None
+    assert _parse_labels("null") is None
+    assert _parse_labels("[]") is None
+    assert _parse_labels("not json at all") is None
     assert _parse_labels('{"labels":{"1":"Read","2":null}}') == ["Read"]
+    assert _parse_labels('{"labels":{}}') == []   # genuinely no labels
 
 
 # -- status labels are the board's, not the code's (incident of 19 Aug 2026) --
@@ -386,12 +392,15 @@ class ForeignLabels(FakeMonday):
 
 def test_an_unmatchable_label_is_dropped_and_reported_not_fatal():
     """One unknown label used to fail the whole mutation — every field lost,
-    the order stamped Failed, and the only trace a MondayError in an Update."""
+    the order stamped Failed, and the only trace a MondayError in an Update.
+    And a dropped value is a silent field loss, so the row must flag ⚠️ Check
+    — the at-a-glance filter is the whole point of the status column."""
     result, monday, _ = run(KANE, monday=ForeignLabels(blob(KANE)))
     assert result["ok"]
     assert "color_install" not in monday.written          # dropped, not fatal
     assert monday.written["text_contact"] == "Gerard Cahalan"   # rest landed
-    assert monday.written["color_status"] == {"label": "Read"}
+    assert monday.written["color_status"] == {"label": "Check"}
+    assert result["status"] == "⚠️ Check"
     assert any("does not exist" in w and "install_required" in w
                for w in result["warnings"])
 
