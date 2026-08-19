@@ -256,3 +256,21 @@ def test_update_lists_what_changed_on_a_revision():
     body = mapping.update_body(revised, mapping.STATUS_READ, [], 14, changes)
     assert "Changed since the previous eOrder" in body
     assert any("units" in c for c in changes)
+
+
+# -- Supabase auth headers (regression: sb_secret keys are not JWTs) --------
+
+def test_new_secret_keys_are_not_sent_as_bearer_tokens():
+    """An sb_secret_ key sent as Authorization: Bearer gets the whole request
+    rejected as a malformed JWT, even with a valid apikey header alongside.
+    This is the bug that made correct navtek credentials look wrong."""
+    from _lib.store import Store
+    headers = Store("https://x.supabase.co", "sb_secret_abc")._headers()
+    assert headers["apikey"] == "sb_secret_abc"
+    assert "Authorization" not in headers
+
+
+def test_legacy_jwt_keys_keep_the_bearer_header():
+    from _lib.store import Store
+    headers = Store("https://x.supabase.co", "eyJhbGciOi.payload.sig")._headers()
+    assert headers["Authorization"] == "Bearer eyJhbGciOi.payload.sig"

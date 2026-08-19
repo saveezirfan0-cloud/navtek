@@ -48,11 +48,21 @@ class Store:
             self._client = httpx.Client(timeout=self._timeout)
 
     def _headers(self, prefer=None):
-        headers = {
-            "apikey": self.key,
-            "Authorization": f"Bearer {self.key}",
-            "Content-Type": "application/json",
-        }
+        """Auth headers, shaped to the key's generation.
+
+        Legacy keys are JWTs and are sent both as `apikey` and as a Bearer
+        token — the historical pattern. The new sb_secret_ keys are NOT JWTs:
+        send one as `Authorization: Bearer` and Supabase tries to verify it as
+        a JWT and rejects the whole request with 401, even though the `apikey`
+        header alone is valid and grants full service access.
+
+        That distinction is why a correct key, copied correctly from the
+        correct project, was still "rejected" here. The key was never the
+        problem; this header was.
+        """
+        headers = {"apikey": self.key, "Content-Type": "application/json"}
+        if self.key.startswith("eyJ"):
+            headers["Authorization"] = f"Bearer {self.key}"
         if prefer:
             headers["Prefer"] = prefer
         return headers
@@ -138,6 +148,37 @@ class Store:
             "Expected a key beginning sb_secret_."
         )
 
+    def project_mismatch(self):
+        """Does the key belong to the project the URL points at?
+
+        Legacy Supabase keys are JWTs whose payload carries the project ref,
+        and the URL is https://<ref>.supabase.co — so a mismatched pair can be
+        proven offline. This matters because a key from the wrong project is
+        rejected in exactly the same way as a wrong or truncated key, and there
+        is otherwise no way to tell them apart from the outside.
+        """
+        key, url = self.key or "", self.url or ""
+        if not key.startswith("eyJ") or ".supabase.co" not in url:
+            return None
+        import base64
+        import json as _json
+        try:
+            payload = key.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            key_ref = _json.loads(base64.urlsafe_b64decode(payload)).get("ref")
+        except Exception:  # noqa: BLE001
+            return None
+        url_ref = url.split("//", 1)[-1].split(".", 1)[0]
+        if key_ref and url_ref and key_ref != url_ref:
+            return (
+                f"The key belongs to Supabase project '{key_ref}', but "
+                f"SUPABASE_URL points at project '{url_ref}'. Take the URL and "
+                f"the key from the same project."
+            )
+        if key_ref and key_ref == url_ref:
+            return False   # proven to match
+        return None
+
     def ping(self):
         """Try each candidate pair and keep the first that works.
 
@@ -174,8 +215,14 @@ class Store:
             return {"ok": False, "state": "unreachable", "detail": f"{type(exc).__name__}: {exc}"}
 
         if response.status_code in (401, 403):
+            mismatch = self.project_mismatch()
+            if mismatch:
+                return {"ok": False, "state": "wrong_project",
+                        "key_looks_like": self.key_kind(), "detail": mismatch}
             return {"ok": False, "state": "rejected",
                     "key_looks_like": self.key_kind(),
+                    "project_match": "confirmed same project" if mismatch is False
+                    else "could not be checked from the key",
                     "detail":
                     "Supabase rejected the key. It must be the SECRET key "
                     "(sb_secret_… or legacy service_role) — only that can read "

@@ -52,7 +52,7 @@ def jobs_for_account(monday, store, account):
         try:
             raw = monday.gql(
                 """
-                query ($b: ID!, $c: String!, $v: [String!]) {
+                query ($b: ID!, $c: String!, $v: [String]!) {
                   items_page_by_column_values (
                     board_id: $b, limit: 100,
                     columns: [{column_id: $c, column_values: $v}]

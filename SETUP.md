@@ -222,7 +222,7 @@ left, value on the right, click **Add**.
 | `MONDAY_TOKEN` | the monday token from Part 4 |
 | `ORDERS_BOARD_ID` | `5834171978` |
 | `SUPABASE_URL` | the Project URL from 3.3 |
-| `SUPABASE_SERVICE_KEY` | the secret key from 3.3 |
+| `SUPABASE_SECRET_KEY` | the secret key from 3.3 (`SUPABASE_SERVICE_KEY` also works) |
 | `PORTAL_SHARED_SECRET` | your second random string |
 | `SETUP_KEY` | your first random string |
 | `WRITE_ORDER_TYPE` | `false` |

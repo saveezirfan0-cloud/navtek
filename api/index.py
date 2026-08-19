@@ -62,6 +62,10 @@ def health():
         source = f"environment only — could not read the board: {exc}"
 
     return {
+        "build": {
+            "version": config.APP_VERSION,
+            "commit": (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:7] or None,
+        },
         "ok": not config.missing_secrets() and not config.CONFIG_WARNINGS,
         "missing_secrets": config.missing_secrets(),
         "config_warnings": config.CONFIG_WARNINGS,
@@ -89,7 +93,15 @@ async def eorder(request: Request):
         return {"challenge": payload["challenge"]}
 
     result = handle_webhook(payload)
-    return JSONResponse(result, status_code=200 if result.get("ok") else 422)
+    # Always 200, even when the ingest failed.
+    #
+    # monday retries any delivery that does not get a 2xx, and each retry of a
+    # failing file re-ran the failure path and posted another ❌ Update — one
+    # bad drop produced a notification storm. The failure is already reported
+    # on the row itself, which is where the person who dropped the file is
+    # looking; a retry cannot fix a bad file, only repeat the report. The body
+    # still carries ok: false for anything reading the response directly.
+    return JSONResponse(result, status_code=200)
 
 
 @app.post("/api/py/parse")

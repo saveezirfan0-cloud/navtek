@@ -104,10 +104,26 @@ def _run(monday, store, payload, result, started):
         return {**result, "ok": False,
                 "reason": "no file column called 'eOrder' on this board"}
 
+    # Ignore removals.
+    #
+    # monday has no "file uploaded" trigger — a file column fires the same
+    # change event whether a file was added or deleted. Rather than rely on the
+    # automation being configured a particular way, the removal case is caught
+    # here: the payload's new value carries the files that remain, and an empty
+    # list means someone deleted one. Doing nothing is right, and it must be
+    # reported as success so monday does not retry it as a failure.
+    value = event.get("value")
+    if isinstance(value, dict) and "files" in value and not value.get("files"):
+        return {**result, "ok": True, "skipped": "file removed — nothing to do"}
+
     try:
         assets = monday.asset_urls(item_id, file_column)
         if not assets:
-            return {**result, "ok": False, "reason": "no file on the eOrder column"}
+            # The column is empty. Reached when a file was removed, or when the
+            # event arrives after the file is already gone. Not an error, and
+            # nothing on the row should be touched.
+            return {**result, "ok": True,
+                    "skipped": "no file on the eOrder column — nothing to do"}
 
         asset = assets[-1]  # most recent drop wins
         blob = monday.download(asset["public_url"])

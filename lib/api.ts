@@ -105,6 +105,7 @@ export type Ingest = {
 };
 
 export type Health = {
+  build?: { version: string; commit: string | null };
   ok: boolean;
   missing_secrets: string[];
   config_warnings?: string[];

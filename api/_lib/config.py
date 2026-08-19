@@ -13,6 +13,11 @@ done.
 import json
 import os
 
+# Bumped with every packaged build. Shown on /health and the dashboard so
+# "which build is actually live" is a fact you can read, not a guess — an
+# ambiguity that has cost real debugging time in this project.
+APP_VERSION = "2026-08-19.2"
+
 # --------------------------------------------------------------------------
 # Secrets — server side only, always. Never expose to a browser (brief §10).
 # --------------------------------------------------------------------------

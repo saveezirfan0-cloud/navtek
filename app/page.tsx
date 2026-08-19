@@ -156,6 +156,13 @@ export default async function Dashboard() {
             </table>
           )}
         </div>
+        <div className="foot">
+          {health?.build
+            ? `Build ${health.build.version}${
+                health.build.commit ? ` · ${health.build.commit}` : ""
+              }`
+            : "Build unknown — the Python API is not responding"}
+        </div>
       </div>
     </>
   );

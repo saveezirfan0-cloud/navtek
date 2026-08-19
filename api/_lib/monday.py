@@ -127,7 +127,7 @@ class Monday:
         """Exact-match lookup. Used for the opportunity_id 1:1 join (§3.4)."""
         data = self.gql(
             """
-            query ($b: ID!, $c: String!, $v: [String!]) {
+            query ($b: ID!, $c: String!, $v: [String]!) {
               items_page_by_column_values (
                 board_id: $b, limit: 50,
                 columns: [{column_id: $c, column_values: $v}]

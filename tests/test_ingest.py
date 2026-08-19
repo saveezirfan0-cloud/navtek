@@ -257,3 +257,48 @@ def test_the_order_still_lands_when_the_database_is_broken():
 def test_the_asset_is_downloaded_exactly_once():
     _, monday, _ = run(KANE)
     assert monday.downloads == 1
+
+
+# -- removals must not trigger anything (monday has no "uploaded" trigger) ---
+
+def test_removing_a_file_does_nothing():
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    monday = FakeMonday(blob(KANE))
+    payload = {"event": {"pulseId": 123, "boardId": BOARD_ID,
+                         "value": {"files": []}}}
+    result = ingest.handle_webhook(payload, monday, FakeStore())
+    # Success, so monday does not retry it as a failure.
+    assert result["ok"]
+    assert "removed" in result["skipped"]
+    assert monday.written == {}
+    assert monday.renamed is None
+    assert monday.updates == []
+    assert monday.downloads == 0
+
+
+def test_an_empty_file_column_does_nothing():
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+
+    class NoFiles(FakeMonday):
+        def asset_urls(self, item_id, column_id):
+            return []
+
+    monday = NoFiles(blob(KANE))
+    result = ingest.handle_webhook(
+        {"event": {"pulseId": 123, "boardId": BOARD_ID}}, monday, FakeStore())
+    assert result["ok"]
+    assert monday.written == {}
+    assert monday.updates == []
+
+
+def test_an_upload_still_runs_when_files_are_present():
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    monday = FakeMonday(blob(KANE))
+    payload = {"event": {"pulseId": 123, "boardId": BOARD_ID,
+                         "value": {"files": [{"name": "eorder.xlsx"}]}}}
+    result = ingest.handle_webhook(payload, monday, FakeStore())
+    assert result["ok"] and result["status"] == "✅ Read"
+    assert monday.renamed.startswith("KANE CIVIL")
