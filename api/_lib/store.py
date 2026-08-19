@@ -20,6 +20,12 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# One HTTP client per process, not per request — same reasoning as monday.py:
+# a fresh client per Store() meant a new TLS handshake to Supabase on every
+# invocation of every route that touches the database.
+_shared_client = httpx.Client(timeout=15)
+
+
 class Store:
     # Which candidate pair last worked, remembered across calls in a warm
     # function so the fallback costs one probe, not one per request.
@@ -39,13 +45,16 @@ class Store:
         self.url, self.key, self.source = first["url"], first["key"], first["name"]
         self.enabled = bool(self.url and self.key)
         self._timeout = timeout
-        self._client = httpx.Client(timeout=timeout) if self.enabled else None
+        self._client = self._make_client() if self.enabled else None
+
+    def _make_client(self):
+        return _shared_client if self._timeout == 15 else httpx.Client(timeout=self._timeout)
 
     def _use(self, candidate):
         self.url, self.key, self.source = candidate["url"], candidate["key"], candidate["name"]
         self.enabled = bool(self.url and self.key)
         if self._client is None and self.enabled:
-            self._client = httpx.Client(timeout=self._timeout)
+            self._client = self._make_client()
 
     def _headers(self, prefer=None):
         """Auth headers, shaped to the key's generation.
@@ -479,6 +488,20 @@ class Store:
         except httpx.HTTPError:
             return []
 
+    def cache_jobs(self, rows):
+        """Upsert a whole job list in ONE request.
+
+        The portal used to call cache_job once per job, sequentially, on the
+        request's critical path — 25 jobs meant 25 PostgREST round trips before
+        the installer saw anything. PostgREST inserts a list natively.
+        """
+        if not rows:
+            return []
+        return self._post(
+            "jobs_cache", rows,
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
+
     def cached_jobs(self, installer_account_id):
         return self._get(
             "jobs_cache",
@@ -491,6 +514,37 @@ class Store:
     # posture as the rest of the class: callers distinguish "no such user"
     # from "database down" via self.degraded, and index.py turns the latter
     # into a clear error rather than a silent login failure.
+
+    # -- login throttling ----------------------------------------------------
+    #
+    # Backed by the existing portal_events table, so no new schema. Fail-open
+    # by design: with the database down these return 0/[] and the login is
+    # decided by the password alone — throttling protects credentials, it must
+    # never become the outage that locks everyone out.
+
+    def record_failed_login(self, email):
+        return self._post(
+            "portal_events",
+            [{"monday_item_id": 0, "action": "login_failed",
+              "payload": {"email": email}}],
+            prefer="return=minimal",
+        )
+
+    def recent_failed_logins(self, email, minutes=15):
+        """How many failed sign-ins this email has had in the window."""
+        if not self.enabled or not email:
+            return 0
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        rows = self._get("portal_events", {
+            "action": "eq.login_failed",
+            "payload->>email": f"eq.{email}",
+            "created_at": f"gte.{cutoff}",
+            "select": "id",
+            "limit": "25",
+        })
+        return len(rows)
 
     def users_exist(self):
         """True, False, or None when the database can't answer."""

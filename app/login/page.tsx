@@ -3,6 +3,8 @@ import { authState } from "@/lib/api";
 import { currentUser, homeFor } from "@/lib/auth";
 import LoginForm from "./LoginForm";
 
+export const metadata = { title: "Sign in · Navtek" };
+
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {

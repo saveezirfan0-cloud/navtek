@@ -3,6 +3,8 @@ import NoAccess from "../NoAccess";
 import Tester from "./Tester";
 import { requireViewer } from "@/lib/auth";
 
+export const metadata = { title: "File tester · Navtek" };
+
 export const dynamic = "force-dynamic";
 
 export default async function TryPage() {

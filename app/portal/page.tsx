@@ -5,6 +5,8 @@ import JobCard from "@/app/jobs/JobCard";
 import { signOut } from "@/app/login/actions";
 import { stopPreviewAction } from "@/app/users/actions";
 
+export const metadata = { title: "My jobs · Navtek" };
+
 export const dynamic = "force-dynamic";
 
 /** The installer portal for someone with a login — same cards, same actions

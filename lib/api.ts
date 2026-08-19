@@ -26,6 +26,14 @@ function base() {
   return "http://127.0.0.1:3000";
 }
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function call(path: string, init: RequestInit = {}) {
   const response = await fetch(`${base()}/api/py${path}`, {
     ...init,
@@ -39,7 +47,10 @@ async function call(path: string, init: RequestInit = {}) {
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(data?.detail ?? `service returned ${response.status}`);
+    throw new ApiError(
+      data?.detail ?? `service returned ${response.status}`,
+      response.status,
+    );
   }
   return data;
 }
@@ -72,11 +83,15 @@ export type JobsResponse = {
   overdue: number;
 };
 
-export async function getJobs(token: string): Promise<JobsResponse | null> {
+/** `gone` is only true when the service itself said the link is unknown — a
+ * timeout or a 500 must NOT tell an installer their link is dead. */
+export async function getJobs(
+  token: string,
+): Promise<{ jobs: JobsResponse | null; gone: boolean }> {
   try {
-    return await call(`/portal/jobs?token=${encodeURIComponent(token)}`);
-  } catch {
-    return null;
+    return { jobs: await call(`/portal/jobs?token=${encodeURIComponent(token)}`), gone: false };
+  } catch (error) {
+    return { jobs: null, gone: error instanceof ApiError && error.status === 404 };
   }
 }
 
@@ -131,7 +146,7 @@ export async function getRecent(): Promise<{
   database?: DbState;
 }> {
   try {
-    return await call("/recent");
+    return await call("/recent?limit=50");
   } catch (error) {
     // The request itself failed — say so, rather than reporting it as an
     // unconfigured database, which sends people to check the wrong thing.

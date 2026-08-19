@@ -115,7 +115,7 @@ details[open] .more { display: none; }
 }
 .count .btn { width: auto; flex: 0 0 auto; padding: 15px 20px; margin: 0; }
 
-.foot { text-align: center; font-size: 12.5px; color: #93a1b0; padding: 18px 16px 24px; line-height: 1.6; }
+.foot { text-align: center; font-size: 12.5px; color: #5b6b7b; padding: 18px 16px 24px; line-height: 1.6; }
 
 /* New: error and empty states. The prototype had neither — both are moments
    for direction, not apology. */
@@ -326,3 +326,17 @@ pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
 }
 .btn-ghost:hover:not(:disabled) { background: rgba(16, 32, 48, .06); }
 .btn-ghost:disabled { opacity: .45; cursor: default; }
+
+/* -- second-step prompts on job actions (book date, blocked reason, confirm) */
+.ask {
+  border: 1.5px solid #cdd7e1; border-radius: 12px; padding: 12px;
+  margin: 6px 0; display: grid; gap: 8px; background: rgba(16, 32, 48, .025);
+}
+.ask label { font-size: 14px; font-weight: 650; }
+.ask input[type="date"], .ask textarea {
+  font: inherit; padding: 10px; border: 1.5px solid #cdd7e1;
+  border-radius: 9px; width: 100%; background: #fff;
+}
+.ask-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.ask-row .btn { margin: 0; flex: 1 1 auto; }
+.b-plain { background: transparent; color: inherit; border: 1.5px solid #cdd7e1; }

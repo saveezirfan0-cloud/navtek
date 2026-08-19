@@ -79,6 +79,14 @@ def handle_webhook(payload, monday=None, store=None):
     if not item_id:
         return {"ok": False, "reason": "no pulseId in payload"}
 
+    # The board this automation may touch is configuration, not payload. The
+    # webhook is registered on one board, so a delivery naming another one is
+    # either misconfiguration or someone probing the public endpoint — both
+    # end here, before any monday call is made.
+    if board_id != config.ORDERS_BOARD_ID:
+        return {"ok": False,
+                "reason": f"event names board {board_id}, not the orders board"}
+
     result = {"item_id": item_id, "board_id": board_id}
 
     try:
@@ -249,17 +257,21 @@ def _run(monday, store, payload, result, started):
         values.update(status_value)
         warnings.extend(_dropped_warnings(status_dropped, cols))
 
-    if values:
-        monday.set_columns(board_id, target_id, values)
-
+    # The rename rides in the same mutation — change_multiple_column_values
+    # accepts {"name": …} (rename() is implemented with it), and a separate
+    # call was one more round trip on every first read.
     new_name = mapping.item_name(parsed)
     if new_name and existing.get("name") != new_name:
-        monday.rename(board_id, target_id, new_name)
+        values["name"] = new_name
+
+    fields_written = len([k for k in values if k != "name"])
+    if values:
+        monday.set_columns(board_id, target_id, values)
 
     # --- feedback -------------------------------------------------------
     monday.post_update(
         target_id,
-        mapping.update_body(parsed, status, warnings, len(values), changes),
+        mapping.update_body(parsed, status, warnings, fields_written, changes),
     )
 
     duration_ms = int((time.time() - started) * 1000)
@@ -273,7 +285,7 @@ def _run(monday, store, payload, result, started):
     )
 
     return {
-        **result, "ok": True, "status": status, "fields_written": len(values),
+        **result, "ok": True, "status": status, "fields_written": fields_written,
         "database": store.degraded or "ok",
         "warnings": warnings, "changes": changes, "duration_ms": duration_ms,
     }

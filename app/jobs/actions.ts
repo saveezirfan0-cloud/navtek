@@ -16,6 +16,7 @@ export async function submitJob(input: {
   item_id: string;
   action: "contacted" | "booked" | "progress" | "completed" | "blocked";
   value?: string | number;
+  note?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const { token, ...rest } = input;
