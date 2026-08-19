@@ -106,7 +106,7 @@ there (§3.3).
 ## Testing
 
 ```bash
-python -m pytest tests/ -q         # 37 tests, no network, no credentials
+python -m pytest tests/ -q         # 59 tests, no network, no credentials
 python scripts/verify.py samples/  # extraction gate against real eOrders
 ```
 

@@ -299,10 +299,21 @@ The database line may say `warn` rather than `PASS`. That is not blocking:
 orders are still read and written to monday. What is lost without it is the
 duplicate check and the history on the Orders page.
 
-**If the database is rejected**, the likely cause is a URL and key from two
-different Supabase projects — a mismatched pair fails exactly like a wrong key,
-which makes it hard to tell them apart. Set a second pair and the app will try
-both and tell you which works:
+**If the database is rejected**, open `/api/py/health` and read the
+`database` block — it now carries Supabase's own explanation in
+`supabase_said`, and `key_looks_like` names what kind of key it was actually
+given. Three causes cover nearly every case:
+
+- **`supabase_said` mentions legacy keys being disabled.** The project
+  refuses `service_role` keys no matter how correctly they're copied. Copy
+  the **`sb_secret_…`** key instead (Project Settings → API Keys → Secret
+  keys) and put it in `SUPABASE_SECRET_KEY`. Re-enabling legacy keys on that
+  same page also works.
+- **`key_looks_like` says the key is cut short or truncated.** The paste
+  lost the end of the key. Copy the whole value again.
+- **A URL and key from two different Supabase projects** — a mismatched pair
+  fails exactly like a wrong key. `/health` proves or rules this out
+  (`project_match`), and you can set a second pair and let the app try both:
 
 | Name | Value |
 |---|---|
@@ -422,6 +433,8 @@ long it took.
 | `orders_board` is not the board you expected | `ORDERS_BOARD_ID` points somewhere else. The ID is the long number in the board's URL. |
 | Nothing happens when I drop a file | Step 6 wasn't run, or ran with the wrong address. Run it again. |
 | Row fills in but eOrder Status stays blank | The column was renamed. It must be a **Status** column titled exactly `eOrder Status`. Press step 3 to confirm what the app can see. |
+| An Update says `This status label doesn't exist` | The status column's labels differ from what the app writes. The app now reads the board's own labels and matches against them (emoji and case don't matter), so this only remains possible if a label like `Read` was renamed to something else entirely — rename it back, or expect that write to be skipped with a warning in the Update. |
+| Database `rejected` with a correct-looking key | Read `database.supabase_said` on `/api/py/health` — it is Supabase's own reason. Legacy keys disabled → use the `sb_secret_…` key. Signature cut short → re-paste the whole key. See Part 6 step 5. |
 | Portal says "This link no longer works" | Step 5 hasn't been run since that account was added, or the token changed. |
 | Portal loads but shows no jobs | Nothing is allocated to that account. Set the **Installer** column on a row in TN Orders. |
 | `NotImplementedError` about the parser | Part 2. |

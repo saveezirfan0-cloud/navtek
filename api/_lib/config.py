@@ -16,12 +16,34 @@ import os
 # Bumped with every packaged build. Shown on /health and the dashboard so
 # "which build is actually live" is a fact you can read, not a guess — an
 # ambiguity that has cost real debugging time in this project.
-APP_VERSION = "2026-08-19.2"
+APP_VERSION = "2026-08-19.3"
+
+
+def _clean_secret(value):
+    """Strip the two paste accidents that make a correct credential fail.
+
+    Values arrive here by being copied out of a dashboard and pasted into a
+    settings box, so a trailing space or newline rides along easily, and a
+    value copied via a shell keeps its quotes. Both make the real service
+    reject a key that is otherwise correct — SETUP.md calls stray spaces the
+    single most common cause of "it says my token is wrong", and this makes
+    that sentence true in code rather than only in documentation.
+
+    Only applied to credentials sent to monday and Supabase. Symmetric secrets
+    (SETUP_KEY, PORTAL_SHARED_SECRET) are compared against what the other side
+    holds, so cleaning one side alone could un-match a pair that currently
+    works.
+    """
+    value = (value or "").strip()
+    if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
+    return value
+
 
 # --------------------------------------------------------------------------
 # Secrets — server side only, always. Never expose to a browser (brief §10).
 # --------------------------------------------------------------------------
-MONDAY_TOKEN = os.environ.get("MONDAY_TOKEN", "")
+MONDAY_TOKEN = _clean_secret(os.environ.get("MONDAY_TOKEN", ""))
 MONDAY_API_URL = os.environ.get("MONDAY_API_URL", "https://api.monday.com/v2")
 MONDAY_API_VERSION = os.environ.get("MONDAY_API_VERSION", "2024-10")
 
@@ -51,13 +73,14 @@ def supabase_candidates():
     ]
     seen, out = set(), []
     for name, url, key in pairs:
+        url, key = _clean_secret(url), _clean_secret(key)
         if url and key and (url, key) not in seen:
             seen.add((url, key))
             out.append({"name": name, "url": url.rstrip("/"), "key": key})
     return out
 
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_URL = _clean_secret(os.environ.get("SUPABASE_URL", ""))
 _first = supabase_candidates()
 SUPABASE_SERVICE_KEY = _first[0]["key"] if _first else ""
 

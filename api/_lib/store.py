@@ -134,13 +134,28 @@ class Store:
         if key.startswith("eyJ"):
             import base64
             import json as _json
+            parts = key.split(".")
+            if len(parts) != 3 or not parts[2]:
+                return (
+                    "a JWT with its signature missing — the paste lost the end "
+                    "of the key. Copy the whole value again."
+                )
             try:
-                payload = key.split(".")[1]
-                payload += "=" * (-len(payload) % 4)
+                payload = parts[1] + "=" * (-len(parts[1]) % 4)
                 role = _json.loads(base64.urlsafe_b64decode(payload)).get("role")
             except Exception:  # noqa: BLE001
                 return "a JWT, but its contents could not be read"
             if role == "service_role":
+                # A legacy key's HS256 signature is 43 base64url characters.
+                # Shorter means the end of the key did not survive the paste —
+                # the one corruption the payload check above cannot see,
+                # because the readable half of the key is intact.
+                if len(parts[2]) < 40:
+                    return (
+                        f"legacy service_role key, but its signature is cut "
+                        f"short ({len(parts[2])} of 43 characters) — the paste "
+                        f"lost the end of the key. Copy the whole value again."
+                    )
                 return "legacy service_role key (correct type)"
             return f"legacy {role or 'unknown'} key — wrong one. Use service_role or a Secret key."
         return (
@@ -204,6 +219,20 @@ class Store:
             last["also_tried"] = [c["name"] for c in self.candidates]
         return last
 
+    @staticmethod
+    def _server_message(response):
+        """Supabase's own explanation, out of a JSON error body or raw text."""
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                for field in ("message", "msg", "error_description", "error", "hint"):
+                    if body.get(field):
+                        return str(body[field])[:300]
+        except Exception:  # noqa: BLE001
+            pass
+        text = (response.text or "").strip()
+        return text[:300] or None
+
     def _ping_once(self):
         try:
             response = self._client.get(
@@ -215,19 +244,44 @@ class Store:
             return {"ok": False, "state": "unreachable", "detail": f"{type(exc).__name__}: {exc}"}
 
         if response.status_code in (401, 403):
+            # Supabase's own response body names the actual cause — "Invalid
+            # API key", "Legacy API keys are disabled", a JWT error — which is
+            # the difference between guessing and knowing. Discarding it here
+            # is what made this failure cost days instead of minutes.
+            server_said = self._server_message(response)
             mismatch = self.project_mismatch()
             if mismatch:
                 return {"ok": False, "state": "wrong_project",
-                        "key_looks_like": self.key_kind(), "detail": mismatch}
+                        "key_looks_like": self.key_kind(),
+                        "supabase_said": server_said, "detail": mismatch}
+            lowered = (server_said or "").lower()
+            if "legacy" in lowered and ("disabled" in lowered or "expired" in lowered
+                                        or "revoked" in lowered):
+                detail = (
+                    "This Supabase project has legacy API keys disabled, so a "
+                    "service_role key is refused no matter how correctly it was "
+                    "copied. Use the new Secret key instead: Supabase dashboard "
+                    "→ Project Settings → API Keys → copy the sb_secret_… key "
+                    "into SUPABASE_SECRET_KEY (SUPABASE_SERVICE_KEY also "
+                    "works). Re-enabling legacy keys on that same page works "
+                    "too."
+                )
+            else:
+                detail = (
+                    "Supabase rejected the key. It must be the SECRET key "
+                    "(sb_secret_… or legacy service_role) — only that can read "
+                    "these tables. If the type below is already correct and "
+                    "from this project, the value is truncated, or the "
+                    "project's legacy keys were disabled, rotated or revoked — "
+                    "copy a fresh sb_secret_… key from Project Settings → API "
+                    "Keys."
+                )
             return {"ok": False, "state": "rejected",
                     "key_looks_like": self.key_kind(),
                     "project_match": "confirmed same project" if mismatch is False
                     else "could not be checked from the key",
-                    "detail":
-                    "Supabase rejected the key. It must be the SECRET key "
-                    "(sb_secret_… or legacy service_role) — only that can read "
-                    "these tables. If the type below is already correct, the "
-                    "value is truncated or from a different project."}
+                    "supabase_said": server_said,
+                    "detail": detail}
         if response.status_code == 404:
             return {"ok": False, "state": "no_tables", "detail":
                     "Connected, but the eorder_ingests table does not exist. "

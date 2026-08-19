@@ -140,6 +140,69 @@ def v_relation(item_ids):
 
 
 # --------------------------------------------------------------------------
+# Status labels must match the board's, exactly
+# --------------------------------------------------------------------------
+#
+# monday validates every status label against the column's own label list and
+# rejects the ENTIRE change_multiple_column_values mutation over one it doesn't
+# know — one bad label loses every other field in the same write and the order
+# lands as "❌ Failed" even though the parse was fine. That is exactly what
+# happened in production: this app's status column was created with "✅ Read /
+# ⚠️ Check / ❌ Failed", monday stripped the emoji during creation, and every
+# write of "✅ Read" was then refused with "This status label doesn't exist,
+# possible statuses are: {1: Read, 2: Check, 3: Failed}".
+#
+# So before writing, every proposed label is aligned to the board: an exact
+# match passes through, a match up to emoji/punctuation/case is rewritten to
+# the board's own spelling, and a label the column simply doesn't have is
+# dropped and reported as a warning instead of failing the whole order.
+
+def normalise_label(text):
+    """Lowercase letters, digits and single spaces — nothing else.
+
+    "✅ Read", "Read " and "read" all normalise to "read", so a label survives
+    the emoji being stripped, stray whitespace, and case drift.
+    """
+    cleaned = re.sub(r"[^0-9a-z]+", " ", str(text).lower())
+    return " ".join(cleaned.split())
+
+
+def align_status_values(values, labels_by_column):
+    """Fit proposed {"label": …} writes to the labels the board really has.
+
+    Returns (aligned_values, dropped) where dropped is a list of
+    (column_id, proposed_label, available_labels) for anything that could not
+    be matched. Columns with no label information (board unreadable, not a
+    status column) pass through untouched.
+    """
+    aligned, dropped = {}, []
+    for column_id, value in values.items():
+        available = labels_by_column.get(column_id)
+        if (
+            available is None
+            or not isinstance(value, dict)
+            or set(value) != {"label"}
+        ):
+            aligned[column_id] = value
+            continue
+        proposed = value["label"]
+        if proposed in available:
+            aligned[column_id] = value
+            continue
+        by_normalised = {normalise_label(label): label for label in available}
+        wanted = normalise_label(proposed)
+        # A label that normalises to nothing (pure emoji/punctuation) has no
+        # text to match on — treat it as unmatched rather than pairing two
+        # unrelated symbols.
+        match = by_normalised.get(wanted) if wanted else None
+        if match:
+            aligned[column_id] = {"label": match}
+        else:
+            dropped.append((column_id, proposed, list(available)))
+    return aligned, dropped
+
+
+# --------------------------------------------------------------------------
 # Derived values
 # --------------------------------------------------------------------------
 

@@ -17,7 +17,7 @@ from datetime import datetime
 
 from . import columns as columns_mod
 from . import config, installers, mapping
-from .monday import Monday
+from .monday import Monday, MondayError
 from .store import Store, sha256
 
 def _parser():
@@ -213,6 +213,24 @@ def _run(monday, store, payload, result, started):
     if cols.get("eorder_status"):
         values[cols["eorder_status"]] = mapping.v_status(status)
 
+    # Align every status label to the board's real label list. One label the
+    # board doesn't have would fail the whole mutation — every field lost over
+    # a stripped emoji. A label that can't be aligned is dropped and reported,
+    # and the rest of the order still lands.
+    try:
+        board_labels = columns_mod.status_labels(monday, board_id)
+    except Exception:  # noqa: BLE001 - alignment is a guard, never a blocker
+        board_labels = {}
+    values, dropped = mapping.align_status_values(values, board_labels)
+    if dropped:
+        key_by_id = {v: k for k, v in cols.items() if v}
+        for column_id, label, available in dropped:
+            warnings.append(
+                f"label '{label}' does not exist on the "
+                f"{key_by_id.get(column_id, column_id)} column "
+                f"(board has: {', '.join(available) or 'none'}) — not written"
+            )
+
     if values:
         monday.set_columns(board_id, target_id, values)
 
@@ -221,9 +239,17 @@ def _run(monday, store, payload, result, started):
         monday.rename(board_id, target_id, new_name)
 
     # --- multi-site subitems (§8.4) ------------------------------------
+    #
+    # Contained: subitems live on their own board with their own column IDs,
+    # so a value write monday refuses must cost the subitem's values, not the
+    # order — the main row is already written by this point, and a raised
+    # error here would report the whole ingest as failed anyway.
     sites = parsed.get("multi_site") or []
     if sites:
-        result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
+        try:
+            result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"could not create per-site subitems: {exc}")
 
     # --- feedback -------------------------------------------------------
     monday.post_update(
@@ -236,7 +262,8 @@ def _run(monday, store, payload, result, started):
         opportunity_id=opportunity_id, monday_item_id=target_id,
         monday_board_id=board_id, file_name=result.get("file_name"),
         file_sha256=file_sha, parsed=parsed,
-        status={"✅ Read": "read", "⚠️ Check": "check"}.get(status, "failed"),
+        status={mapping.STATUS_READ: "read",
+                mapping.STATUS_CHECK: "check"}.get(status, "failed"),
         warnings=warnings, changed_fields=changes, duration_ms=duration_ms,
     )
 
@@ -274,7 +301,14 @@ def _resolve_item(monday, board_id, dropped_on_item_id, opportunity_id, cols):
 
 
 def _sync_subitems(monday, parent_id, sites, cols):
-    """One subitem per delivery site, each with its own SLA clock."""
+    """One subitem per delivery site, each with its own SLA clock.
+
+    Subitems live on a separate board with its own column IDs, so the parent
+    board's IDs are only valid there if the subitem board happens to mirror
+    them. When monday refuses the values, the subitem is created bare rather
+    than not at all — the site split is the point; the per-site fields are a
+    bonus.
+    """
     existing = {s["name"]: s for s in monday.subitems(parent_id)}
     written = []
     for index, site in enumerate(sites, start=1):
@@ -282,7 +316,10 @@ def _sync_subitems(monday, parent_id, sites, cols):
         if name in existing:
             continue
         values = mapping.subitem_values(site, cols)
-        created = monday.create_subitem(parent_id, name, values)
+        try:
+            created = monday.create_subitem(parent_id, name, values)
+        except MondayError:
+            created = monday.create_subitem(parent_id, name, {})
         written.append({"id": created["id"], "name": name})
     return written
 
@@ -291,10 +328,27 @@ def _fail(monday, board_id, item_id, message, cols=None):
     """Set ❌ Failed and say why. Never touch anything else on the row (§5)."""
     try:
         column_id = (cols or config.COLUMNS).get("eorder_status")
+        if not column_id:
+            # The catch-all failure path arrives here with no resolved columns
+            # (config alone leaves eorder_status as None), which used to mean a
+            # catastrophic failure never set the status at all — the Update was
+            # the only trace. Resolve from the board so ❌ Failed shows.
+            try:
+                column_id = columns_mod.resolved(monday, board_id).get("eorder_status")
+            except Exception:  # noqa: BLE001
+                column_id = None
         if column_id:
-            monday.set_columns(
-                board_id, item_id, {column_id: mapping.v_status(mapping.STATUS_FAILED)}
-            )
+            values = {column_id: mapping.v_status(mapping.STATUS_FAILED)}
+            try:
+                labels = columns_mod.status_labels(monday, board_id)
+                values, _ = mapping.align_status_values(values, labels)
+            except Exception:  # noqa: BLE001 - write unaligned rather than not at all
+                pass
+            try:
+                if values:
+                    monday.set_columns(board_id, item_id, values)
+            except Exception:  # noqa: BLE001 - the Update below must still post
+                traceback.print_exc()
         monday.post_update(item_id, f"❌ <b>Could not read eOrder</b><br>{message}")
     except Exception:  # noqa: BLE001 - reporting must not raise
         traceback.print_exc()

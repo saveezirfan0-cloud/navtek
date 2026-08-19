@@ -90,9 +90,15 @@ class Monday:
     # -- reads -------------------------------------------------------------
 
     def board_columns(self, board_id):
-        """[{id, title, type}] for a board."""
+        """[{id, title, type, settings_str}] for a board.
+
+        settings_str carries a status column's actual labels. The writer needs
+        those because the labels on a live board are the truth — monday rejects
+        the whole change_multiple_column_values mutation over one label it
+        doesn't recognise, taking every other field down with it.
+        """
         data = self.gql(
-            "query ($b: [ID!]) { boards (ids: $b) { columns { id title type } } }",
+            "query ($b: [ID!]) { boards (ids: $b) { columns { id title type settings_str } } }",
             {"b": [str(board_id)]},
         )
         boards = data.get("boards") or []

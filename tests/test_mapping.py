@@ -258,6 +258,44 @@ def test_update_lists_what_changed_on_a_revision():
     assert any("units" in c for c in changes)
 
 
+# -- status labels aligned to the board (incident of 19 Aug 2026) -----------
+
+def test_align_translates_emoji_labels_onto_a_plain_board():
+    values = {
+        "status_eorder": {"label": "✅ Read"},
+        "status_install": {"label": "Yes"},
+        "text_site": "Gerard Cahalan",
+    }
+    labels = {"status_eorder": ["Read", "Check", "Failed"],
+              "status_install": ["Yes", "No", "Customer self-install"]}
+    aligned, dropped = mapping.align_status_values(values, labels)
+    assert aligned["status_eorder"] == {"label": "Read"}
+    assert aligned["status_install"] == {"label": "Yes"}   # exact match kept
+    assert aligned["text_site"] == "Gerard Cahalan"        # non-status untouched
+    assert dropped == []
+
+
+def test_align_keeps_an_exact_emoji_match_when_the_board_has_it():
+    aligned, dropped = mapping.align_status_values(
+        {"s": {"label": "✅ Read"}}, {"s": ["✅ Read", "⚠️ Check", "❌ Failed"]})
+    assert aligned == {"s": {"label": "✅ Read"}}
+    assert dropped == []
+
+
+def test_align_drops_a_label_the_board_does_not_have():
+    aligned, dropped = mapping.align_status_values(
+        {"s": {"label": "TN360"}}, {"s": ["Navman", "Teletrac"]})
+    assert aligned == {}
+    assert dropped == [("s", "TN360", ["Navman", "Teletrac"])]
+
+
+def test_align_passes_through_columns_it_has_no_labels_for():
+    # Board unreadable → no label info → write what we have (old behaviour).
+    aligned, dropped = mapping.align_status_values({"s": {"label": "X"}}, {})
+    assert aligned == {"s": {"label": "X"}}
+    assert dropped == []
+
+
 # -- Supabase auth headers (regression: sb_secret keys are not JWTs) --------
 
 def test_new_secret_keys_are_not_sent_as_bearer_tokens():
@@ -274,3 +312,69 @@ def test_legacy_jwt_keys_keep_the_bearer_header():
     from _lib.store import Store
     headers = Store("https://x.supabase.co", "eyJhbGciOi.payload.sig")._headers()
     assert headers["Authorization"] == "Bearer eyJhbGciOi.payload.sig"
+
+
+# -- Supabase key diagnostics ------------------------------------------------
+
+def _legacy_jwt(ref="abcdefgh", role="service_role", signature="s" * 43):
+    """A structurally real legacy Supabase key: JWT with ref and role."""
+    import base64
+    import json as _json
+
+    def b64(obj):
+        return base64.urlsafe_b64encode(_json.dumps(obj).encode()).decode().rstrip("=")
+
+    return f"{b64({'alg': 'HS256', 'typ': 'JWT'})}.{b64({'ref': ref, 'role': role})}.{signature}"
+
+
+def test_a_service_role_key_with_a_cut_signature_is_named_truncated():
+    """The payload of a truncated key still decodes cleanly — role and project
+    both check out — so without looking at the signature the diagnosis reads
+    'correct type, same project, rejected', which points everywhere except at
+    the paste. The signature length is the tell."""
+    from _lib.store import Store
+    kind = Store("https://abcdefgh.supabase.co", _legacy_jwt(signature="s" * 20)).key_kind()
+    assert "cut short" in kind or "truncated" in kind.lower()
+
+
+def test_an_intact_service_role_key_is_the_correct_type():
+    from _lib.store import Store
+    kind = Store("https://abcdefgh.supabase.co", _legacy_jwt()).key_kind()
+    assert kind == "legacy service_role key (correct type)"
+
+
+def test_ping_surfaces_supabases_own_error_message():
+    """Supabase's 401 body says exactly why a key was refused. Discarding it
+    left only 'rejected', which cannot distinguish a truncated paste from
+    disabled legacy keys from a rotated secret."""
+    from _lib.store import Store
+
+    class Refusal:
+        status_code = 401
+        text = '{"message":"Legacy API keys are disabled"}'
+        content = text.encode()
+
+        def json(self):
+            return {"message": "Legacy API keys are disabled"}
+
+    class Client:
+        def get(self, *args, **kwargs):
+            return Refusal()
+
+    store = Store("https://abcdefgh.supabase.co", _legacy_jwt())
+    store._client = Client()
+    probe = store._ping_once()
+    assert probe["state"] == "rejected"
+    assert probe["supabase_said"] == "Legacy API keys are disabled"
+    # And the detail turns that message into the actual fix.
+    assert "sb_secret_" in probe["detail"]
+    assert "legacy" in probe["detail"].lower()
+
+
+def test_supabase_credentials_survive_pasted_whitespace_and_quotes(monkeypatch):
+    from _lib import config as config_mod
+    monkeypatch.setenv("SUPABASE_URL", " https://abcdefgh.supabase.co\n")
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "'sb_secret_real_value' ")
+    candidates = config_mod.supabase_candidates()
+    assert candidates[0]["url"] == "https://abcdefgh.supabase.co"
+    assert candidates[0]["key"] == "sb_secret_real_value"

@@ -26,8 +26,14 @@ from . import config
 # creation and lookup can never disagree about a title.
 ORDER_COLUMNS = [
     ("eorder_file", "eOrder", "file", None),
+    # Plain labels, no emoji. monday strips emoji when a status column is
+    # created through the API — a column created with "✅ Read" comes back with
+    # the label "Read", and every subsequent write of "✅ Read" is then rejected
+    # with "This status label doesn't exist". The board's own labels are the
+    # truth either way (see status_labels below); these are just the defaults
+    # for a fresh column.
     ("eorder_status", "eOrder Status", "status",
-     {"labels": {"1": "✅ Read", "2": "⚠️ Check", "3": "❌ Failed"}}),
+     {"labels": {"1": "Read", "2": "Check", "3": "Failed"}}),
     ("site_contact", "Site Contact", "text", None),
     ("site_phone", "Site Phone", "phone", None),
     ("site_email", "Site Email", "email", None),
@@ -94,7 +100,24 @@ def _warn(message):
 
 
 _CACHE_TTL = 300
-_cache = {"at": 0.0, "board": None, "columns": None}
+_cache = {"at": 0.0, "board": None, "columns": None, "labels": {}}
+
+
+def _parse_labels(settings_str):
+    """The label list inside a status column's settings_str, or []."""
+    import json
+
+    try:
+        settings = json.loads(settings_str or "{}")
+    except (TypeError, ValueError):
+        return []
+    labels = settings.get("labels")
+    if isinstance(labels, dict):
+        return [str(v) for v in labels.values() if v not in (None, "")]
+    if isinstance(labels, list):  # dropdown-style settings, just in case
+        return [str(l.get("name")) for l in labels
+                if isinstance(l, dict) and l.get("name")]
+    return []
 
 
 def _compatible(reported, wanted):
@@ -133,6 +156,13 @@ def resolved(monday, board_id=None, force=False):
         return {**config.COLUMNS, **columns}
 
     live_ids = {column["id"] for column in live}
+
+    # The real labels on every status column, for the writer to align against.
+    labels = {
+        column["id"]: _parse_labels(column.get("settings_str"))
+        for column in live
+        if column.get("type") in ("status", "color")
+    }
 
     # Drop any COLUMN_IDS override that doesn't exist on this board.
     #
@@ -181,8 +211,21 @@ def resolved(monday, board_id=None, force=False):
     # config.COLUMNS — doing that reinstates the very IDs just dropped as
     # stale, which is exactly the bug this line replaces.
     full = {key: columns.get(key) for key in config.COLUMNS}
-    _cache.update({"at": now, "board": board_id, "columns": full})
+    _cache.update({"at": now, "board": board_id, "columns": full, "labels": labels})
     return full
+
+
+def status_labels(monday, board_id=None):
+    """{column_id: [labels]} for every status column on the board.
+
+    Empty when the board can't be read — callers treat that as "nothing to
+    check against" and write what they have, which is today's behaviour.
+    """
+    board_id = board_id or config.ORDERS_BOARD_ID
+    resolved(monday, board_id)  # fills the cache on a miss
+    if _cache["board"] == board_id and _cache["columns"] is not None:
+        return _cache["labels"] or {}
+    return {}
 
 
 # Columns this app creates and depends on. Everything else in the map is a
@@ -202,4 +245,4 @@ def unmapped_optional(columns):
 
 
 def clear_cache():
-    _cache.update({"at": 0.0, "board": None, "columns": None})
+    _cache.update({"at": 0.0, "board": None, "columns": None, "labels": {}})
