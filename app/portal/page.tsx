@@ -1,4 +1,5 @@
 import Link from "next/link";
+import AutoRefresh from "@/app/AutoRefresh";
 import { getMyJobs } from "@/lib/api";
 import { requireUser, sessionToken } from "@/lib/auth";
 import JobCard from "@/app/jobs/JobCard";
@@ -53,6 +54,7 @@ export default async function MyJobs() {
 
   return (
     <div className="wrap">
+      <AutoRefresh seconds={60} />
       <header>
         <div className="brand">{account.name} · Navtek installs</div>
         <div className="who">{user.name}</div>

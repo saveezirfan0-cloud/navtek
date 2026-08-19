@@ -260,8 +260,19 @@ def validate(parsed, installer_match=None):
 
     A missing installer is explicitly NOT a warning — only 1 of 5 sample orders
     named one, so it is the normal case (§8.1).
+
+    Several checks here are also made by the parser's own `_validate()`, whose
+    output arrives in `_warnings`. That overlap is deliberate — this layer must
+    still warn if a parser revision drops a check — but the same fact must not
+    reach the row twice, so each duplicate-prone append is guarded by a
+    substring the parser's wording shares, and the final list is deduplicated.
     """
     warnings = list(parsed.get("_warnings") or [])
+
+    def already_flagged(*needles):
+        return any(
+            all(needle in warning for needle in needles) for warning in warnings
+        )
 
     missing_critical = [f for f in CRITICAL_FIELDS if _is_blank(parsed.get(f))]
     if missing_critical:
@@ -269,7 +280,7 @@ def validate(parsed, installer_match=None):
 
     ship_to = str(_get(parsed, "ship_to_type", default="")).lower()
 
-    if ship_to == "multiple":
+    if ship_to == "multiple" and not already_flagged("subitem"):
         sites = _get(parsed, "multi_site", default=[]) or []
         warnings.append(
             f"ship-to is Multiple Addresses — {len(sites)} site(s) split to subitems"
@@ -279,7 +290,9 @@ def validate(parsed, installer_match=None):
     # nothing_to_ship, multiple, unknown. "unknown" means the ship-to cell was
     # empty, which is the case the brief wants flagged — with nothing there we
     # cannot tell whether an install is needed.
-    if ship_to == "unknown" or _is_blank(_get(parsed, "installer_company")):
+    if (
+        ship_to == "unknown" or _is_blank(_get(parsed, "installer_company"))
+    ) and not already_flagged("ship-to", "blank"):
         warnings.append("ship-to is blank — cannot tell whether an install is needed")
 
     missing_expected = [f for f in EXPECTED_FIELDS if _is_blank(parsed.get(f))]
@@ -302,6 +315,7 @@ def validate(parsed, installer_match=None):
             f"Accounts board — allocation left blank"
         )
 
+    warnings = list(dict.fromkeys(warnings))
     return (STATUS_CHECK if warnings else STATUS_READ), warnings
 
 

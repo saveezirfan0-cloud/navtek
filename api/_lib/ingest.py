@@ -77,12 +77,14 @@ def handle_webhook(payload, monday=None, store=None):
     board_id = int(event.get("boardId") or config.ORDERS_BOARD_ID)
 
     if not item_id:
-        return {"ok": False, "reason": "no pulseId in payload"}
+        outcome = {"ok": False, "reason": "no pulseId in payload"}
+        _log_webhook(store, outcome, started)
+        return outcome
 
     result = {"item_id": item_id, "board_id": board_id}
 
     try:
-        return _run(monday, store, payload, result, started)
+        outcome = _run(monday, store, payload, result, started)
     except Exception as exc:  # noqa: BLE001
         # Anything unforeseen still gets reported on the row. A webhook that
         # 500s silently looks identical to one that never fired, and monday
@@ -90,7 +92,34 @@ def handle_webhook(payload, monday=None, store=None):
         detail = f"{type(exc).__name__}: {exc}"
         _fail(monday, board_id, item_id,
               f"Something went wrong reading this eOrder.<br>{detail}")
-        return {**result, "ok": False, "reason": detail}
+        outcome = {**result, "ok": False, "reason": detail}
+
+    _log_webhook(store, outcome, started)
+    return outcome
+
+
+def _log_webhook(store, outcome, started):
+    """One ledger row per webhook delivery, whatever happened.
+
+    The endpoint always returns 200 (so monday doesn't retry-storm), which
+    means monday's own automation log shows every run as Success — a skipped
+    duplicate, a removed file and a fully processed order are indistinguishable
+    from monday's side. This log is where the difference is visible.
+    """
+    try:
+        store.record_webhook(
+            monday_item_id=outcome.get("item_id"),
+            monday_board_id=outcome.get("board_id"),
+            opportunity_id=outcome.get("opportunity_id"),
+            file_name=outcome.get("file_name"),
+            outcome=("skipped" if outcome.get("skipped")
+                     else "processed" if outcome.get("ok") else "failed"),
+            reason=outcome.get("skipped") or outcome.get("reason"),
+            status=outcome.get("status"),
+            duration_ms=int((time.time() - started) * 1000),
+        )
+    except Exception:  # noqa: BLE001 - the log must never cost the order
+        pass
 
 
 def _run(monday, store, payload, result, started):
@@ -165,7 +194,21 @@ def _run(monday, store, payload, result, started):
         return {**result, "ok": False, "reason": "no opportunity_id"}
 
     # --- idempotency (criterion 2) -------------------------------------
+    #
+    # Skipping must still be VISIBLE. This happens when a person re-drops a
+    # file (monday doesn't retry a 200), and to them a silent skip looks
+    # exactly like the automation being broken — the run shows Success in
+    # monday's log and nothing changes on the row.
     if store.already_ingested(opportunity_id, file_sha):
+        try:
+            monday.post_update(
+                item_id,
+                "ℹ️ <b>Already read</b> — this exact file has been processed "
+                "before, so nothing was changed. A revised eOrder (a different "
+                "file) will be read as an update.",
+            )
+        except Exception:  # noqa: BLE001 - the notice must never fail the skip
+            pass
         return {**result, "ok": True, "skipped": "identical file already read"}
 
     previous = store.previous_parse(opportunity_id)

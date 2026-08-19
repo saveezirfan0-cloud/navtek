@@ -193,6 +193,44 @@ def test_vanity_phone_conversion_is_surfaced_not_swallowed():
     assert any("COSMO" in w for w in warnings)
 
 
+def test_a_warning_the_parser_already_made_is_not_repeated():
+    # The parser's own _validate() puts "phone: <note>" into _warnings, and
+    # validate() derives the same warning from site_phone_note. The Cosmo
+    # Cranes row showed it twice — in the monday Update AND the dashboard.
+    cosmo = {
+        **KANE,
+        "site_phone_note": "vanity number converted: 1300 1 COSMO",
+        "_warnings": ["phone: vanity number converted: 1300 1 COSMO"],
+    }
+    status, warnings = mapping.validate(cosmo)
+    assert status == mapping.STATUS_CHECK
+    assert warnings.count("phone: vanity number converted: 1300 1 COSMO") == 1
+
+
+def test_ship_to_blank_is_flagged_once_despite_different_wordings():
+    # Parser and mapping word this check differently, so exact dedupe alone
+    # can't catch it — the guard has to recognise the parser's version.
+    blank = {
+        **KANE, "installer_company": None, "ship_to_type": "unknown",
+        "_warnings": ["ship-to company blank — cannot tell whether an install is needed"],
+    }
+    status, warnings = mapping.validate(blank)
+    assert status == mapping.STATUS_CHECK
+    assert sum("ship-to" in w and "blank" in w for w in warnings) == 1
+
+
+def test_multi_site_split_is_flagged_once_when_the_parser_already_said_so():
+    multi = {
+        **KANE, "ship_to_type": "multiple",
+        "multi_site": [{"qty": 4}, {"qty": 8}],
+        "_warnings": ["multi-site order: 2 delivery sites — "
+                      "create one subitem per site, each with its own SLA clock"],
+    }
+    status, warnings = mapping.validate(multi)
+    assert status == mapping.STATUS_CHECK
+    assert sum("subitem" in w for w in warnings) == 1
+
+
 # -- installer matching ----------------------------------------------------
 
 ACCOUNTS = [

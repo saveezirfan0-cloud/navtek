@@ -409,6 +409,23 @@ class Store:
             "select": "*", "order": "created_at.desc", "limit": str(limit),
         })
 
+    # -- webhook log ---------------------------------------------------------
+    #
+    # One row per webhook delivery, including the outcomes the ingest ledger
+    # never sees — duplicate skips, removed files, deliveries with no file.
+    # monday's automation log shows all of these as Success.
+
+    def record_webhook(self, **fields):
+        try:
+            return self._post("webhook_log", [fields], prefer="return=minimal")
+        except httpx.HTTPError:
+            return []
+
+    def recent_webhooks(self, limit=30):
+        return self._get("webhook_log", {
+            "select": "*", "order": "created_at.desc", "limit": str(limit),
+        })
+
     def record_unknown_order_reason(self, order_reason, opportunity_id, file_name):
         """Brief §4.1 — an unrecognised order reason silently produces no ACV."""
         try:

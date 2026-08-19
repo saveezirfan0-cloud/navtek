@@ -690,6 +690,15 @@ def recent(limit: int = Query(default=20)):
         return {"enabled": False, "ingests": [],
                 "database": {"ok": False, "state": "error",
                              "detail": f"{type(exc).__name__}: {exc}"}}
+
+    # The webhook log includes what the ingest ledger never sees — duplicate
+    # skips and no-file deliveries, which monday's own log shows as Success.
+    # An absent table (0004 not run yet) degrades to an empty list plus a flag
+    # the dashboard turns into a "run the migration" hint.
+    store.degraded = None
+    hooks = store.recent_webhooks(min(limit, 50))
+    webhook_log_ready = not (store.degraded and "webhook_log" in str(store.degraded))
+
     return {
         "enabled": True,
         "ingests": [
@@ -705,6 +714,20 @@ def recent(limit: int = Query(default=20)):
                 "item_name": (r.get("parsed") or {}).get("derived_item_name"),
             }
             for r in rows
+        ],
+        "webhook_log_ready": webhook_log_ready,
+        "webhooks": [
+            {
+                "monday_item_id": h.get("monday_item_id"),
+                "opportunity_id": h.get("opportunity_id"),
+                "file_name": h.get("file_name"),
+                "outcome": h.get("outcome"),
+                "reason": h.get("reason"),
+                "status": h.get("status"),
+                "duration_ms": h.get("duration_ms"),
+                "created_at": h.get("created_at"),
+            }
+            for h in hooks
         ],
     }
 

@@ -125,9 +125,25 @@ export async function getHealth(): Promise<Health | null> {
 
 export type DbState = { ok: boolean; state: string; detail?: string };
 
+/** One webhook delivery from monday, whatever came of it. monday's own
+ * automation log shows all of these as Success; this is where a skipped
+ * duplicate or a no-file delivery becomes visible. */
+export type WebhookRun = {
+  monday_item_id: number | null;
+  opportunity_id: string | null;
+  file_name: string | null;
+  outcome: "processed" | "skipped" | "failed";
+  reason: string | null;
+  status: string | null;
+  duration_ms: number | null;
+  created_at: string;
+};
+
 export async function getRecent(): Promise<{
   enabled: boolean;
   ingests: Ingest[];
+  webhooks?: WebhookRun[];
+  webhook_log_ready?: boolean;
   database?: DbState;
 }> {
   try {
@@ -138,6 +154,7 @@ export async function getRecent(): Promise<{
     return {
       enabled: false,
       ingests: [],
+      webhooks: [],
       database: {
         ok: false,
         state: "unreachable",

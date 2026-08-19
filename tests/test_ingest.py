@@ -136,6 +136,7 @@ class FakeStore:
         self.degraded = "simulated failure" if broken else None
         self.ingests = []
         self.unknown_reasons = []
+        self.webhooks = []
 
     def already_ingested(self, opportunity_id, file_sha):
         if self.broken:
@@ -159,6 +160,10 @@ class FakeStore:
 
     def record_unknown_order_reason(self, reason, opp, name):
         self.unknown_reasons.append(reason)
+
+    def record_webhook(self, **fields):
+        self.webhooks.append(fields)
+        return []
 
     def installer_accounts(self, active_only=True):
         return []
@@ -207,6 +212,23 @@ def test_identical_file_dropped_twice_is_skipped():
     assert monday2.written == {}
     assert monday2.renamed is None
     assert len(store.ingests) == 1
+    # The skip must be VISIBLE — a person re-dropping the file sees Success in
+    # monday's automation log, and without this notice concludes the app broke.
+    assert any("Already read" in u for u in monday2.updates)
+
+
+# -- every webhook delivery leaves a trace, including the invisible ones ------
+
+def test_webhook_log_records_processed_and_skipped_outcomes():
+    store = FakeStore()
+    run(KANE, store=store)
+    run(KANE, store=store)  # duplicate — skipped, absent from the ingest ledger
+
+    assert [w["outcome"] for w in store.webhooks] == ["processed", "skipped"]
+    skipped = store.webhooks[1]
+    assert skipped["reason"] == "identical file already read"
+    assert skipped["opportunity_id"] == "006VP00000agsnG"
+    assert len(store.ingests) == 1  # the ledger itself still holds one read
 
 
 # -- criterion 3: a revised eOrder updates and says what changed -------------
