@@ -300,3 +300,29 @@ pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
 /* Wide tables scroll inside themselves rather than the page. */
 .scroll-x { overflow-x: auto; }
 .scroll-x table { min-width: 760px; }
+
+/* -- admin preview of another login ---------------------------------------- */
+/* Loud on purpose: an admin looking through someone else's eyes should never
+   mistake it for their own session. */
+.preview-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 9px 22px; font-size: 14.5px; font-weight: 600;
+  background: #7c2d92; color: #fff;
+}
+.preview-bar b { font-weight: 800; }
+.preview-exit {
+  border: 1px solid rgba(255, 255, 255, .65); border-radius: 7px;
+  background: rgba(255, 255, 255, .14); color: #fff;
+  font: inherit; font-size: 13.5px; font-weight: 700;
+  padding: 4px 12px; cursor: pointer;
+}
+.preview-exit:hover { background: rgba(255, 255, 255, .28); }
+.wrap .preview-bar { border-radius: 10px; margin-bottom: 14px; }
+
+.btn-ghost {
+  border: 1px solid var(--line, #cdd7e1); border-radius: 7px;
+  background: transparent; color: inherit; font: inherit; font-size: 13.5px;
+  padding: 5px 10px; cursor: pointer; white-space: nowrap;
+}
+.btn-ghost:hover:not(:disabled) { background: rgba(16, 32, 48, .06); }
+.btn-ghost:disabled { opacity: .45; cursor: default; }

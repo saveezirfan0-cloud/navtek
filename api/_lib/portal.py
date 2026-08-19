@@ -36,13 +36,16 @@ def business_days_since(when):
     return days
 
 
-def jobs_for_account(monday, store, account):
+def jobs_for_account(monday, store, account, record_view=True):
     """Every open job allocated to this installer account.
 
     Reads monday live — allocation changes there and the portal must reflect it
     (§6.2). The cache is a fallback for when monday is slow or rate-limiting,
     not the primary path, because a stale job list sends someone to a site that
     was reallocated last week.
+
+    record_view=False is the admin preview: the 'viewed' audit event answers
+    "did the installer actually look", so an admin previewing must not forge it.
     """
     cols = columns_mod.resolved(monday)
     column_id = cols.get("installer")
@@ -84,8 +87,9 @@ def jobs_for_account(monday, store, account):
 
     action.sort(key=lambda j: -(j.get("overdue_days") or 0))
 
-    store.record_event(0, "viewed", installer_account_id=account["id"],
-                       payload={"jobs": len(jobs)})
+    if record_view:
+        store.record_event(0, "viewed", installer_account_id=account["id"],
+                           payload={"jobs": len(jobs)})
 
     return {
         "account": {

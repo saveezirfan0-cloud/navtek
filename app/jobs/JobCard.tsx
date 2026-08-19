@@ -32,7 +32,17 @@ function chip(job: Job) {
   return { cls: "c-amber", text: `Contact the customer — day ${days} of ${SLA_DAYS}` };
 }
 
-export default function JobCard({ job, token }: { job: Job; token?: string }) {
+export default function JobCard({
+  job,
+  token,
+  readOnly = false,
+}: {
+  job: Job;
+  token?: string;
+  /** Admin preview: show the card exactly as the installer sees it, minus the
+   * buttons — a preview must never book, complete or block a real job. */
+  readOnly?: boolean;
+}) {
   const tag = chip(job);
   const units = job.units_total ? `${job.units_total} units` : null;
 
@@ -80,6 +90,8 @@ export default function JobCard({ job, token }: { job: Job; token?: string }) {
 
         {job.state === "waiting" ? (
           <div className="flat">Hardware not dispatched yet — nothing to do</div>
+        ) : readOnly ? (
+          <div className="flat">Preview — actions are disabled</div>
         ) : (
           <JobActions job={job} token={token} />
         )}
