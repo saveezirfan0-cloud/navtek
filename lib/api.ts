@@ -26,6 +26,14 @@ function base() {
   return "http://127.0.0.1:3000";
 }
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function call(path: string, init: RequestInit = {}) {
   const response = await fetch(`${base()}/api/py${path}`, {
     ...init,
@@ -39,7 +47,10 @@ async function call(path: string, init: RequestInit = {}) {
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(data?.detail ?? `service returned ${response.status}`);
+    throw new ApiError(
+      data?.detail ?? `service returned ${response.status}`,
+      response.status,
+    );
   }
   return data;
 }
@@ -70,13 +81,24 @@ export type JobsResponse = {
   action_needed: Job[];
   waiting: Job[];
   overdue: number;
+  sla_days?: number;
+  /** When this list was last read from monday (ISO). Null when even the
+   * cache is empty. */
+  refreshed_at?: string | null;
+  /** True when the list came from a cache more than an hour old — the page
+   * shows "Updated 3h ago" so nobody drives to a reallocated site. */
+  stale?: boolean;
 };
 
-export async function getJobs(token: string): Promise<JobsResponse | null> {
+/** `gone` is only true when the service itself said the link is unknown — a
+ * timeout or a 500 must NOT tell an installer their link is dead. */
+export async function getJobs(
+  token: string,
+): Promise<{ jobs: JobsResponse | null; gone: boolean }> {
   try {
-    return await call(`/portal/jobs?token=${encodeURIComponent(token)}`);
-  } catch {
-    return null;
+    return { jobs: await call(`/portal/jobs?token=${encodeURIComponent(token)}`), gone: false };
+  } catch (error) {
+    return { jobs: null, gone: error instanceof ApiError && error.status === 404 };
   }
 }
 
@@ -131,7 +153,7 @@ export async function getRecent(): Promise<{
   database?: DbState;
 }> {
   try {
-    return await call("/recent");
+    return await call("/recent?limit=50");
   } catch (error) {
     // The request itself failed — say so, rather than reporting it as an
     // unconfigured database, which sends people to check the wrong thing.
@@ -161,4 +183,190 @@ export async function getInstallers(): Promise<{ accounts: Account[] }> {
   } catch {
     return { accounts: [] };
   }
+}
+
+// -- auth ------------------------------------------------------------------
+//
+// The browser holds one opaque session token in an httpOnly cookie. Every
+// question about who that is goes through here, server side, with the shared
+// secret attached — the Python half answers from the database.
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  name: string;
+  is_admin: boolean;
+  can_orders: boolean;
+  can_installer: boolean;
+  installer_account_id: string | null;
+  active: boolean;
+  created_at?: string;
+  last_login_at?: string | null;
+};
+
+export type AuthState = {
+  users_exist: boolean | null;
+  database: DbState;
+};
+
+export async function authState(): Promise<AuthState | null> {
+  try {
+    return await call("/auth/state");
+  } catch {
+    return null;
+  }
+}
+
+export async function authLogin(input: {
+  email: string;
+  password: string;
+  user_agent?: string;
+}): Promise<{ token: string; user: AuthUser }> {
+  return call("/auth/login", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function authBootstrap(input: {
+  email: string;
+  name: string;
+  password: string;
+  setup_key: string;
+  user_agent?: string;
+}): Promise<{ token: string; user: AuthUser }> {
+  // The typed key replaces the one this server holds: creating the first
+  // admin must prove knowledge of SETUP_KEY, not just reach this page.
+  const { setup_key, ...body } = input;
+  return call("/auth/bootstrap", {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: { "X-Setup-Key": setup_key },
+  });
+}
+
+export async function authLogout(token: string): Promise<void> {
+  try {
+    await call("/auth/logout", { method: "POST", body: JSON.stringify({ token }) });
+  } catch {
+    // A failed logout still clears the cookie; the session expires on its own.
+  }
+}
+
+export async function authMe(session: string): Promise<AuthUser | null> {
+  try {
+    const data = await call("/auth/me", { headers: { "X-Session": session } });
+    return data.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// -- user management (admin) -----------------------------------------------
+
+export type InstallerAccountRef = { id: string; name: string; active: boolean };
+
+export async function adminListUsers(
+  session: string,
+): Promise<{ users: AuthUser[]; installer_accounts: InstallerAccountRef[] } | null> {
+  try {
+    return await call("/users", { headers: { "X-Session": session } });
+  } catch {
+    return null;
+  }
+}
+
+export async function adminCreateUser(
+  session: string,
+  input: {
+    email: string;
+    name: string;
+    password: string;
+    is_admin?: boolean;
+    can_orders?: boolean;
+    can_installer?: boolean;
+    installer_account_id?: string | null;
+  },
+): Promise<{ user: AuthUser }> {
+  return call("/users", {
+    method: "POST",
+    body: JSON.stringify(input),
+    headers: { "X-Session": session },
+  });
+}
+
+export async function adminUpdateUser(
+  session: string,
+  input: {
+    id: string;
+    is_admin?: boolean;
+    can_orders?: boolean;
+    can_installer?: boolean;
+    active?: boolean;
+    installer_account_id?: string | null;
+    name?: string;
+    password?: string;
+  },
+): Promise<{ user: AuthUser }> {
+  return call("/users/update", {
+    method: "POST",
+    body: JSON.stringify(input),
+    headers: { "X-Session": session },
+  });
+}
+
+// -- previewing a user (admin) -----------------------------------------------
+
+/** The AuthUser a given login resolves to — admin session required. Used to
+ * render the app through that user's eyes without minting them a session. */
+export async function adminPreviewUser(
+  session: string,
+  userId: string,
+): Promise<AuthUser | null> {
+  try {
+    const data = await call(`/users/preview?user_id=${encodeURIComponent(userId)}`, {
+      headers: { "X-Session": session },
+    });
+    return data.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The job list a given installer login would see — admin session required,
+ * read only (no 'viewed' event is recorded server side). */
+export async function getPreviewJobs(
+  session: string,
+  userId: string,
+): Promise<JobsResponse | null> {
+  try {
+    return await call(`/portal/preview-jobs?user_id=${encodeURIComponent(userId)}`, {
+      headers: { "X-Session": session },
+    });
+  } catch {
+    return null;
+  }
+}
+
+// -- the portal, for logged-in installer users ------------------------------
+
+export async function getMyJobs(session: string): Promise<JobsResponse | null> {
+  try {
+    return await call("/portal/my-jobs", { headers: { "X-Session": session } });
+  } catch {
+    return null;
+  }
+}
+
+export async function postMyAction(
+  session: string,
+  input: {
+    item_id: string;
+    action: "contacted" | "booked" | "progress" | "completed" | "blocked";
+    value?: string | number;
+    note?: string;
+  },
+) {
+  return call("/portal/my-action", {
+    method: "POST",
+    body: JSON.stringify(input),
+    headers: { "X-Session": session },
+  });
 }

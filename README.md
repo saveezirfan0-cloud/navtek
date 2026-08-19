@@ -6,10 +6,15 @@ and is the one that matters now.
 - **The order flow.** Drop a Teletrac Navman eOrder onto a row in **TN Orders
   2026/2025/2024** (`5834171978`) and the row fills itself in. Needs: the
   parser, the board columns, the webhook. Nothing else.
-- **The installer portal.** A magic link per installer account showing their
-  jobs, taking contacted / booked / progress / complete back to the board.
-  Later. With no Installer Accounts board configured, the order flow skips
-  allocation entirely rather than flagging every order as unmatched.
+- **The installer workflow.** A magic link per installer account showing their
+  jobs, taking contacted / booked / progress / complete back to the board —
+  plus the machinery around it: one Install item per site on every
+  installable order, the allocation SMS (installer set AND dispatched), the
+  2-business-day SLA clock with an Australian-holiday calendar, reallocation
+  handling, and the "6.1 Installer Esc." escalation. All of it sits behind a
+  go-live cutoff and a shadow-mode flag — see **The SLA engine** below. With
+  no Installer Accounts board configured, the order flow skips allocation
+  entirely rather than flagging every order as unmatched.
 
 Built to the Aug 2026 build brief. Section references below point at it.
 
@@ -88,14 +93,42 @@ the contract is what to check first if output looks thin.
 
 | | |
 |---|---|
-| `/` | Dashboard — every eOrder read, with status and timing |
-| `/setup` | Board setup, seven steps. Gated on `SETUP_KEY`. |
-| `/installers` | Accounts and their portal links |
-| `/try` | Drop an eOrder in, see what the parser reads. Writes nothing. |
-| `/j/[token]` | The installer portal |
-| `/api/py/eorder` | monday webhook |
+| `/login` | Sign in. First visit ever offers to create the first admin (needs `SETUP_KEY`). |
+| `/` | Dashboard — every eOrder read, with status and timing. Needs **Orders** access. |
+| `/try` | Drop an eOrder in, see what the parser reads. Writes nothing. Needs **Orders** access. |
+| `/portal` | The installer portal for a **logged-in** installer user — their linked account's jobs. |
+| `/users` | Who can sign in and what each login sees. Admin only. |
+| `/setup` | Board setup. Admin only, plus `SETUP_KEY` for the board-changing steps. |
+| `/installers` | Accounts and their magic links. Admin only. |
+| `/j/[token]` | The installer portal via magic link — no login, the link is the password |
+| `/api/py/eorder` | monday webhook — eOrder file drops |
+| `/api/py/installer-change` | monday webhook — Installer column (reallocation) |
+| `/api/py/portal/refresh` | monday webhook — dispatch date / status edits refresh the job cache |
+| `/api/py/sla/sweep` | the daily SLA pass (Vercel cron; portal secret or `CRON_SECRET`) |
+| `/api/py/portal/resync` | hourly cache rebuild (Vercel cron; same guard) |
 | `/api/py/parse` | xlsx in, JSON out. No monday, no database. |
-| `/api/py/health` | What's configured and what isn't |
+| `/api/py/health` | What's configured and what isn't — including the SLA engine's mode |
+
+### Logins and access
+
+Two switches per user, flipped by an admin on `/users`: **Orders** (dashboard +
+file tester) and **Installer** (the portal, which also needs the login linked
+to exactly one installer account — the server scopes every job list and
+write-back to that account). Admins see everything, manage users, and cannot
+remove their own admin access or deactivate themselves.
+
+Sessions are opaque tokens in an httpOnly cookie; the database stores only
+their SHA-256, passwords only as PBKDF2 hashes (`supabase/migrations/
+0002_users.sql`). Deactivating a user signs them out everywhere on their next
+click. Magic links (`/j/[token]`) are unchanged and independent — an installer
+can hold a link, a login, or both.
+
+**Preview.** Each row on `/users` has a 👁 Preview button: the app renders
+exactly as that login would see it — nav, pages, and their portal jobs — under
+a loud banner, read-only. No session is minted for the previewed user; the
+admin's own session authorises every request, and the preview cookie is inert
+without one. It exists so "what will this person see when I flip this switch"
+is a thing you check, not guess.
 
 `/parse` is deliberately dependency-free — it is how you check a file without
 writing anything anywhere, and what Make would call if the flow ever moves
@@ -106,7 +139,7 @@ there (§3.3).
 ## Testing
 
 ```bash
-python -m pytest tests/ -q         # 37 tests, no network, no credentials
+python -m pytest tests/ -q         # 59 tests, no network, no credentials
 python scripts/verify.py samples/  # extraction gate against real eOrders
 ```
 
@@ -121,6 +154,39 @@ down. Each of those was verified by hand once and then quietly broken by a
 later change; that is why they are tests now.
 
 Or use `/try` in the browser, which needs no local setup at all.
+
+---
+
+## The SLA engine
+
+The rule: an installer must contact the customer within `SLA_BUSINESS_DAYS`
+(default 2) business days of hardware dispatch — business days per the
+installer account's **State** (`api/_lib/holidays_au.py` holds the national +
+NSW + VIC public holidays as data; a test fails once the covered years run
+out). The allocation SMS fires when **both** halves are true — Installer set
+AND dispatched, whichever lands second — never on installer-set alone.
+
+Every send and escalation claims a row in the `notifications` table
+(`unique (item, kind)`) *before* acting, so webhook retry storms and re-edits
+can't double-text. Reallocation (Installer column changes A → B) texts B like
+a fresh allocation with a **fresh SLA clock from the reallocation date**,
+tells A "nothing more to do" only if A had been notified, and never texts
+anyone about an undispatched job. A breach sets the order's existing
+**"6.1 Installer Esc."** status label, once per breach.
+
+Two guards sit in front of all of it:
+
+- **`SLA_GO_LIVE_DATE`** — only jobs *dispatched on or after* this date enter
+  the engine. Unset means the engine is off, not "no cutoff": the board
+  carries jobs 212 business days overdue, and a sweep without the cutoff
+  would text every installer about months-old backlog on day one.
+- **`SLA_NOTIFICATIONS_ENABLED`** — default `false`: the daily sweep runs in
+  shadow mode, recording breaches and logging what it *would* send. Flip to
+  `true` only after reading a week of shadow output.
+
+`vercel.json` schedules the sweep daily and the portal cache resync hourly;
+set `CRON_SECRET` so only Vercel can trigger them. `api/_lib/sms.py` is a
+logging stub — the SMS provider is a config change in that one module.
 
 ---
 

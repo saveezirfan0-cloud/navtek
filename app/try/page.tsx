@@ -1,10 +1,25 @@
 import Nav from "../Nav";
+import NoAccess from "../NoAccess";
 import Tester from "./Tester";
+import { requireViewer } from "@/lib/auth";
 
-export default function TryPage() {
+export const metadata = { title: "File tester · Navtek" };
+
+export const dynamic = "force-dynamic";
+
+export default async function TryPage() {
+  const { user, realUser } = await requireViewer();
+  if (!user.can_orders && !user.is_admin) {
+    return (
+      <>
+        <Nav current="/try" user={user} realUser={realUser} />
+        <NoAccess user={user} need="Orders" />
+      </>
+    );
+  }
   return (
     <>
-      <Nav current="/try" />
+      <Nav current="/try" user={user} realUser={realUser} />
       <div className="admin">
         <div className="head">
           <h1>File tester</h1>

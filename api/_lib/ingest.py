@@ -17,7 +17,7 @@ from datetime import datetime
 
 from . import columns as columns_mod
 from . import config, installers, mapping
-from .monday import Monday
+from .monday import Monday, MondayError
 from .store import Store, sha256
 
 def _parser():
@@ -78,6 +78,14 @@ def handle_webhook(payload, monday=None, store=None):
 
     if not item_id:
         return {"ok": False, "reason": "no pulseId in payload"}
+
+    # The board this automation may touch is configuration, not payload. The
+    # webhook is registered on one board, so a delivery naming another one is
+    # either misconfiguration or someone probing the public endpoint — both
+    # end here, before any monday call is made.
+    if board_id != config.ORDERS_BOARD_ID:
+        return {"ok": False,
+                "reason": f"event names board {board_id}, not the orders board"}
 
     result = {"item_id": item_id, "board_id": board_id}
 
@@ -210,38 +218,91 @@ def _run(monday, store, payload, result, started):
     # A revised eOrder is allowed to correct fields; a first read only fills gaps.
     values = proposed if changes else mapping.merge_preserving(proposed, existing_text)
 
+    # Align every status label to the board's real label list. One label the
+    # board doesn't have would fail the whole mutation — every field lost over
+    # a stripped emoji. A label that can't be aligned is dropped and reported,
+    # and the rest of the order still lands.
+    try:
+        board_labels = columns_mod.status_labels(monday, board_id)
+    except Exception:  # noqa: BLE001 - alignment is a guard, never a blocker
+        board_labels = {}
+    values, dropped = mapping.align_status_values(values, board_labels)
+    warnings.extend(_dropped_warnings(dropped, cols))
+
+    # --- Install items: one subitem per site, for EVERY install (§8.4) --
+    #
+    # A single-site order gets one Install item carrying the same fields the
+    # multi-site ones do, sourced from the main delivery block; a Multiple
+    # Addresses order gets one per site row; Install Required = No gets none.
+    # The portal, SLA clock and SMS trigger all start from "staff sets the
+    # Installer column", so every installable order must produce the same
+    # uniform object — not two divergent code paths.
+    #
+    # Contained: subitems live on their own board with their own column IDs,
+    # so a value write monday refuses must cost the subitem's values, not the
+    # order. Runs before the row write so a failure here still counts toward
+    # the status stamped on the row.
+    sites = mapping.install_sites(parsed)
+    if sites:
+        try:
+            result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"could not create per-site subitems: {exc}")
+
+    # A warning collected after validate() — a dropped label, a failed subitem
+    # — must still turn Read into Check. validate's own contract is
+    # "STATUS_CHECK if warnings else STATUS_READ", and the board filter on
+    # ⚠️ Check is the at-a-glance signal this column exists for; a clean flag
+    # over a silent field loss defeats it.
+    if warnings and status == mapping.STATUS_READ:
+        status = mapping.STATUS_CHECK
+
     if cols.get("eorder_status"):
-        values[cols["eorder_status"]] = mapping.v_status(status)
+        status_value, status_dropped = mapping.align_status_values(
+            {cols["eorder_status"]: mapping.v_status(status)}, board_labels
+        )
+        values.update(status_value)
+        warnings.extend(_dropped_warnings(status_dropped, cols))
 
-    if values:
-        monday.set_columns(board_id, target_id, values)
-
+    # The rename rides in the same mutation — change_multiple_column_values
+    # accepts {"name": …} (rename() is implemented with it), and a separate
+    # call was one more round trip on every first read.
     new_name = mapping.item_name(parsed)
     if new_name and existing.get("name") != new_name:
-        monday.rename(board_id, target_id, new_name)
+        values["name"] = new_name
 
-    # --- multi-site subitems (§8.4) ------------------------------------
-    sites = parsed.get("multi_site") or []
-    if sites:
-        result["subitems"] = _sync_subitems(monday, target_id, sites, cols)
+    fields_written = len([k for k in values if k != "name"])
+    if values:
+        monday.set_columns(board_id, target_id, values)
 
     # --- feedback -------------------------------------------------------
     monday.post_update(
         target_id,
-        mapping.update_body(parsed, status, warnings, len(values), changes),
+        mapping.update_body(parsed, status, warnings, fields_written, changes),
     )
+
+    # The ingest can complete the SMS rule's second half — a dispatch date
+    # arriving by file while the Installer column is already set (or the
+    # allocation suggestion above setting it while dispatch is known). The
+    # evaluation is idempotent and must never cost the order.
+    try:
+        from . import notify
+        result["notify"] = notify.evaluate(monday, store, target_id)
+    except Exception as exc:  # noqa: BLE001
+        result["notify"] = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
 
     duration_ms = int((time.time() - started) * 1000)
     store.record_ingest(
         opportunity_id=opportunity_id, monday_item_id=target_id,
         monday_board_id=board_id, file_name=result.get("file_name"),
         file_sha256=file_sha, parsed=parsed,
-        status={"✅ Read": "read", "⚠️ Check": "check"}.get(status, "failed"),
+        status={mapping.STATUS_READ: "read",
+                mapping.STATUS_CHECK: "check"}.get(status, "failed"),
         warnings=warnings, changed_fields=changes, duration_ms=duration_ms,
     )
 
     return {
-        **result, "ok": True, "status": status, "fields_written": len(values),
+        **result, "ok": True, "status": status, "fields_written": fields_written,
         "database": store.degraded or "ok",
         "warnings": warnings, "changes": changes, "duration_ms": duration_ms,
     }
@@ -250,6 +311,17 @@ def _run(monday, store, payload, result, started):
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+
+def _dropped_warnings(dropped, cols):
+    """One warning line per status label the board refused to accept."""
+    key_by_id = {v: k for k, v in cols.items() if v}
+    return [
+        f"label '{label}' does not exist on the "
+        f"{key_by_id.get(column_id, column_id)} column "
+        f"(board has: {', '.join(available) or 'none'}) — not written"
+        for column_id, label, available in dropped
+    ]
+
 
 def _acv_reason_known(order_reason):
     return str(order_reason).strip().lower() in {
@@ -274,7 +346,14 @@ def _resolve_item(monday, board_id, dropped_on_item_id, opportunity_id, cols):
 
 
 def _sync_subitems(monday, parent_id, sites, cols):
-    """One subitem per delivery site, each with its own SLA clock."""
+    """One subitem per delivery site, each with its own SLA clock.
+
+    Subitems live on a separate board with its own column IDs, so the parent
+    board's IDs are only valid there if the subitem board happens to mirror
+    them. When monday refuses the values, the subitem is created bare rather
+    than not at all — the site split is the point; the per-site fields are a
+    bonus.
+    """
     existing = {s["name"]: s for s in monday.subitems(parent_id)}
     written = []
     for index, site in enumerate(sites, start=1):
@@ -282,7 +361,10 @@ def _sync_subitems(monday, parent_id, sites, cols):
         if name in existing:
             continue
         values = mapping.subitem_values(site, cols)
-        created = monday.create_subitem(parent_id, name, values)
+        try:
+            created = monday.create_subitem(parent_id, name, values)
+        except MondayError:
+            created = monday.create_subitem(parent_id, name, {})
         written.append({"id": created["id"], "name": name})
     return written
 
@@ -291,10 +373,27 @@ def _fail(monday, board_id, item_id, message, cols=None):
     """Set ❌ Failed and say why. Never touch anything else on the row (§5)."""
     try:
         column_id = (cols or config.COLUMNS).get("eorder_status")
+        if not column_id:
+            # The catch-all failure path arrives here with no resolved columns
+            # (config alone leaves eorder_status as None), which used to mean a
+            # catastrophic failure never set the status at all — the Update was
+            # the only trace. Resolve from the board so ❌ Failed shows.
+            try:
+                column_id = columns_mod.resolved(monday, board_id).get("eorder_status")
+            except Exception:  # noqa: BLE001
+                column_id = None
         if column_id:
-            monday.set_columns(
-                board_id, item_id, {column_id: mapping.v_status(mapping.STATUS_FAILED)}
-            )
+            values = {column_id: mapping.v_status(mapping.STATUS_FAILED)}
+            try:
+                labels = columns_mod.status_labels(monday, board_id)
+                values, _ = mapping.align_status_values(values, labels)
+            except Exception:  # noqa: BLE001 - write unaligned rather than not at all
+                pass
+            try:
+                if values:
+                    monday.set_columns(board_id, item_id, values)
+            except Exception:  # noqa: BLE001 - the Update below must still post
+                traceback.print_exc()
         monday.post_update(item_id, f"❌ <b>Could not read eOrder</b><br>{message}")
     except Exception:  # noqa: BLE001 - reporting must not raise
         traceback.print_exc()

@@ -120,6 +120,8 @@ class handler(BaseHTTPRequestHandler):
             "env_present": sorted(
                 k for k in (
                     "MONDAY_TOKEN", "SUPABASE_URL", "SUPABASE_SERVICE_KEY",
+                    "SUPABASE_SECRET_KEY", "SUPABASE_URL_2",
+                    "SUPABASE_SERVICE_KEY_2",
                     "SETUP_KEY", "COLUMN_IDS", "ORDERS_BOARD_ID",
                     "INSTALLERS_BOARD_ID", "PORTAL_SHARED_SECRET",
                 ) if os.environ.get(k)

@@ -149,13 +149,21 @@ GitHub replaces the placeholder. Click the file to confirm it now begins
    `supabase` → `migrations` → `0001_init.sql`
 3. Click the **copy icon** at the top right of the file
 4. Paste into the SQL editor and click **Run**
+5. Repeat with `0002_users.sql` — that one creates the login tables
+6. Repeat with `0003_grants.sql` — that one gives the service key access to
+   the tables. On most projects it is already true and the script changes
+   nothing; on projects where it isn't, every key fails with "permission
+   denied" until this runs.
+7. Repeat with `0004_installer_flow.sql` — that one creates the SMS/SLA
+   dedupe table and adds a State to each installer account. Without it the
+   installer notifications can't guarantee one-text-per-job, so they stay off.
 
 You want **Success. No rows returned.** That is what a successful table
 creation looks like — it isn't an error.
 
-Confirm it: click **Table Editor**. You should see five tables —
+Confirm it: click **Table Editor**. You should see eight tables —
 `installer_accounts`, `eorder_ingests`, `portal_events`, `jobs_cache`,
-`unknown_order_reasons`.
+`unknown_order_reasons`, `app_users`, `app_sessions`, `notifications`.
 
 ### 3.3 Copy two values
 
@@ -226,6 +234,7 @@ left, value on the right, click **Add**.
 | `PORTAL_SHARED_SECRET` | your second random string |
 | `SETUP_KEY` | your first random string |
 | `WRITE_ORDER_TYPE` | `false` |
+| `WEBHOOK_SECRET` | *(optional but recommended)* a third random string. With it set, the monday webhook URL carries a token and the automation rejects anything else that posts to it. Set it before running Setup step 4 — or set it later and run step 4 again. |
 
 Check for stray spaces at the start or end of each pasted value. That is the
 single most common cause of "it says my token is wrong".
@@ -239,8 +248,36 @@ Copy the address at the top when it finishes — something like
 
 ### 5.5 Check it worked
 
-Open your app address. You should get the **Orders** page, with a yellow bar
-saying setup isn't finished. That bar is correct at this stage.
+Open your app address. You should land on the **sign-in page**, offering to
+create the first admin — that's correct, do that next (Part 5½). If it warns
+that the database isn't connected, a variable in 5.3 didn't save.
+
+### Part 5½ — Sign in
+
+The app is behind a login. The **first person to open it creates the first
+admin account** — it asks for a name, an email, a password of at least 10
+characters, and the **SETUP_KEY** (proof you're the person who deployed this,
+not just someone who found the address).
+
+After that, nobody else can register themselves. You add everyone on the
+**Users** page:
+
+- **Orders** access — sees the Orders dashboard and the file tester. This is
+  for your staff.
+- **Installer** access — sees the installer portal. Link the login to an
+  installer account on the same row, and that login sees exactly that
+  account's jobs, nothing else.
+- **Admin** — everything, including this Users page and Setup.
+
+Give each new user their starting password directly; any admin can reset it
+later on the same page. Switching someone off signs them out everywhere,
+immediately.
+
+The magic links from Part 7 still work and don't need a login — an installer
+can have a link, a login, or both.
+
+Then open **Orders**. You should see a yellow bar saying setup isn't
+finished. That bar is correct at this stage.
 
 If you want the detail, open `/api/py/health` on the end of your address:
 
@@ -291,6 +328,12 @@ only**, so the existing DocuSign `files` column carries on being ignored, and
 pressing it twice reuses the existing webhook rather than registering a second
 one that would process every file twice.
 
+The same press also registers the installer-flow webhooks — on the
+**Installer**, dispatch-date and **Status** columns — so reallocations and
+direct edits in monday reach the portal within seconds. Columns that don't
+exist yet are skipped and reported, and running the step again after they're
+created picks them up. All idempotent: nothing is ever registered twice.
+
 **5 — Check everything works.** Press **Run the check**. It tests the monday
 token, the board, the columns, the parser, the webhook and the database, and
 tells you which are working. It is read-only.
@@ -299,10 +342,25 @@ The database line may say `warn` rather than `PASS`. That is not blocking:
 orders are still read and written to monday. What is lost without it is the
 duplicate check and the history on the Orders page.
 
-**If the database is rejected**, the likely cause is a URL and key from two
-different Supabase projects — a mismatched pair fails exactly like a wrong key,
-which makes it hard to tell them apart. Set a second pair and the app will try
-both and tell you which works:
+**If the database is rejected**, open `/api/py/health` and read the
+`database` block — it now carries Supabase's own explanation in
+`supabase_said`, and `key_looks_like` names what kind of key it was actually
+given. Four causes cover nearly every case:
+
+- **`supabase_said` says `permission denied for table …`.** The key is fine —
+  it was accepted, and then the database refused the role because its grants
+  are missing. No key change helps; run `supabase/migrations/0003_grants.sql`
+  in the SQL Editor (health calls this state `no_grants`).
+- **`supabase_said` mentions legacy keys being disabled.** The project
+  refuses `service_role` keys no matter how correctly they're copied. Copy
+  the **`sb_secret_…`** key instead (Project Settings → API Keys → Secret
+  keys) and put it in `SUPABASE_SECRET_KEY`. Re-enabling legacy keys on that
+  same page also works.
+- **`key_looks_like` says the key is cut short or truncated.** The paste
+  lost the end of the key. Copy the whole value again.
+- **A URL and key from two different Supabase projects** — a mismatched pair
+  fails exactly like a wrong key. `/health` proves or rules this out
+  (`project_match`), and you can set a second pair and let the app try both:
 
 | Name | Value |
 |---|---|
@@ -341,6 +399,37 @@ boards. The old free-text `installer` column is left where it is, as history.
 **B — Copy the installers into the database.** The portal looks a magic link up
 in the database, so an account added in monday stays invisible until this runs.
 Run it again whenever you add, deactivate or reissue an account.
+
+### Switching on the SLA engine *(after the portal is in use)*
+
+The SLA engine — the 2-business-day contact clock, the installer SMS, the
+"6.1 Installer Esc." escalation — ships **off** and comes on in two separate
+moves, in this order:
+
+1. **Set the cutoff.** Add `SLA_GO_LIVE_DATE` (e.g. `2026-09-01`) to the
+   Vercel environment variables and redeploy. Only jobs **dispatched on or
+   after that date** ever enter the engine. The board carries jobs up to 212
+   business days overdue; without this cutoff, day one texts every installer
+   about months-old backlog and kills trust in the first hour. Everything
+   older stays a by-hand reconciliation.
+
+   With just this set the engine runs in **shadow mode**: the daily sweep
+   computes ages, records breaches, and logs what it *would* send — visible in
+   the Vercel function logs — but sends nothing and touches no status.
+
+2. **Go live.** After a week of real orders, read the shadow log. When it
+   would have texted the right people about the right jobs, set
+   `SLA_NOTIFICATIONS_ENABLED` to `true` and redeploy.
+
+Also worth setting: `CRON_SECRET` (any random string) — Vercel attaches it to
+the scheduled sweep (daily) and portal resync (hourly) that `vercel.json`
+already defines, so nobody else can trigger them. Each installer account has a
+**State** column (NSW, VIC, …) on the Installer Accounts board; the SLA clock
+skips that state's public holidays. Blank means NSW. Re-run setup step A once
+after this update to add the column, and step B to sync it.
+
+The SMS itself currently goes to a **log, not a phone** — the provider
+(Twilio or similar) is a one-module change in `api/_lib/sms.py` once chosen.
 
 ---
 
@@ -415,6 +504,10 @@ long it took.
 
 | What you see | What it means |
 |---|---|
+| Sign-in page says the database isn't connected | The Supabase variables from 5.3 didn't save, or `0002_users.sql` hasn't been run (3.2). |
+| "Create the first admin" won't accept the key | It wants `SETUP_KEY` exactly as set in Vercel — check for stray spaces. |
+| Someone sees "This page isn't switched on for you" | An admin needs to enable Orders or Installer for them on the **Users** page. |
+| An installer login shows "No installer account linked" | On **Users**, pick their account in the Installer account column. |
 | Yellow bar saying setup isn't finished | Work through Part 6. It disappears on its own. |
 | Setup page says SETUP_KEY isn't set | You added it but didn't redeploy. Deployments → ⋯ → Redeploy. |
 | `missing_secrets` on `/api/py/health` | A variable didn't save, or has a space in it. Fix, then redeploy. |
@@ -422,6 +515,9 @@ long it took.
 | `orders_board` is not the board you expected | `ORDERS_BOARD_ID` points somewhere else. The ID is the long number in the board's URL. |
 | Nothing happens when I drop a file | Step 6 wasn't run, or ran with the wrong address. Run it again. |
 | Row fills in but eOrder Status stays blank | The column was renamed. It must be a **Status** column titled exactly `eOrder Status`. Press step 3 to confirm what the app can see. |
+| An Update says `This status label doesn't exist` | The status column's labels differ from what the app writes. The app now reads the board's own labels and matches against them (emoji and case don't matter), so this only remains possible if a label like `Read` was renamed to something else entirely — rename it back, or expect that write to be skipped with a warning in the Update. |
+| Database `rejected` with a correct-looking key | Read `database.supabase_said` on `/api/py/health` — it is Supabase's own reason. Legacy keys disabled → use the `sb_secret_…` key. Signature cut short → re-paste the whole key. See Part 6 step 5. |
+| Database says `no_grants` / `permission denied for table …` | The key works; the database role lost its table grants. Run `supabase/migrations/0003_grants.sql` in the SQL Editor. Keys and environment variables are not the problem. |
 | Portal says "This link no longer works" | Step 5 hasn't been run since that account was added, or the token changed. |
 | Portal loads but shows no jobs | Nothing is allocated to that account. Set the **Installer** column on a row in TN Orders. |
 | `NotImplementedError` about the parser | Part 2. |

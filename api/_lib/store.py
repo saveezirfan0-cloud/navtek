@@ -20,6 +20,12 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# One HTTP client per process, not per request — same reasoning as monday.py:
+# a fresh client per Store() meant a new TLS handshake to Supabase on every
+# invocation of every route that touches the database.
+_shared_client = httpx.Client(timeout=15)
+
+
 class Store:
     # Which candidate pair last worked, remembered across calls in a warm
     # function so the fallback costs one probe, not one per request.
@@ -39,13 +45,16 @@ class Store:
         self.url, self.key, self.source = first["url"], first["key"], first["name"]
         self.enabled = bool(self.url and self.key)
         self._timeout = timeout
-        self._client = httpx.Client(timeout=timeout) if self.enabled else None
+        self._client = self._make_client() if self.enabled else None
+
+    def _make_client(self):
+        return _shared_client if self._timeout == 15 else httpx.Client(timeout=self._timeout)
 
     def _use(self, candidate):
         self.url, self.key, self.source = candidate["url"], candidate["key"], candidate["name"]
         self.enabled = bool(self.url and self.key)
         if self._client is None and self.enabled:
-            self._client = httpx.Client(timeout=self._timeout)
+            self._client = self._make_client()
 
     def _headers(self, prefer=None):
         """Auth headers, shaped to the key's generation.
@@ -71,6 +80,24 @@ class Store:
     # produces one degraded run rather than an exception per call.
     degraded = None
 
+    def _send(self, request):
+        """Run a request; on an auth refusal, elect a working pair and retry.
+
+        Only ping() used to try the other credential pairs, so /health could
+        elect the working pair while a cold function instance served logins
+        and lookups with the dead first pair — intermittent 401s that read as
+        flaky passwords while the dashboard said the database was ready. Any
+        401/403 now runs the same election once; `request` re-reads self.url
+        and self._headers() when called, so the retry uses the elected pair.
+        Costs nothing when only one pair is configured.
+        """
+        response = request()
+        if response.status_code in (401, 403) and len(self.candidates) > 1:
+            failed_pair = self.source
+            if self.ping().get("ok") and self.source != failed_pair:
+                response = request()
+        return response
+
     def _get(self, table, params):
         """Read, and never raise.
 
@@ -88,9 +115,9 @@ class Store:
         if not self.enabled:
             return []
         try:
-            response = self._client.get(
+            response = self._send(lambda: self._client.get(
                 f"{self.url}/rest/v1/{table}", params=params, headers=self._headers()
-            )
+            ))
             if response.status_code >= 400:
                 self.degraded = f"HTTP {response.status_code} reading {table}"
                 return []
@@ -104,11 +131,11 @@ class Store:
         if not self.enabled:
             return []
         try:
-            response = self._client.post(
+            response = self._send(lambda: self._client.post(
                 f"{self.url}/rest/v1/{table}",
                 content=json.dumps(rows, default=str),
                 headers=self._headers(prefer),
-            )
+            ))
             if response.status_code >= 400:
                 self.degraded = f"HTTP {response.status_code} writing {table}"
                 return []
@@ -116,6 +143,40 @@ class Store:
         except Exception as exc:  # noqa: BLE001
             self.degraded = f"{type(exc).__name__} writing {table}"
             return []
+
+    def _patch(self, table, params, fields, prefer="return=representation"):
+        """Update rows matching params. Never raises, like _get and _post."""
+        if not self.enabled:
+            return []
+        try:
+            response = self._send(lambda: self._client.patch(
+                f"{self.url}/rest/v1/{table}",
+                params=params,
+                content=json.dumps(fields, default=str),
+                headers=self._headers(prefer),
+            ))
+            if response.status_code >= 400:
+                self.degraded = f"HTTP {response.status_code} updating {table}"
+                return []
+            return response.json() if response.content else []
+        except Exception as exc:  # noqa: BLE001
+            self.degraded = f"{type(exc).__name__} updating {table}"
+            return []
+
+    def _delete(self, table, params):
+        if not self.enabled:
+            return False
+        try:
+            response = self._send(lambda: self._client.delete(
+                f"{self.url}/rest/v1/{table}", params=params, headers=self._headers()
+            ))
+            if response.status_code >= 400:
+                self.degraded = f"HTTP {response.status_code} deleting from {table}"
+                return False
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.degraded = f"{type(exc).__name__} deleting from {table}"
+            return False
 
     def key_kind(self):
         """Classify the configured key without revealing it.
@@ -134,13 +195,28 @@ class Store:
         if key.startswith("eyJ"):
             import base64
             import json as _json
+            parts = key.split(".")
+            if len(parts) != 3 or not parts[2]:
+                return (
+                    "a JWT with its signature missing — the paste lost the end "
+                    "of the key. Copy the whole value again."
+                )
             try:
-                payload = key.split(".")[1]
-                payload += "=" * (-len(payload) % 4)
+                payload = parts[1] + "=" * (-len(parts[1]) % 4)
                 role = _json.loads(base64.urlsafe_b64decode(payload)).get("role")
             except Exception:  # noqa: BLE001
                 return "a JWT, but its contents could not be read"
             if role == "service_role":
+                # A legacy key's HS256 signature is 43 base64url characters.
+                # Shorter means the end of the key did not survive the paste —
+                # the one corruption the payload check above cannot see,
+                # because the readable half of the key is intact.
+                if len(parts[2]) < 40:
+                    return (
+                        f"legacy service_role key, but its signature is cut "
+                        f"short ({len(parts[2])} of 43 characters) — the paste "
+                        f"lost the end of the key. Copy the whole value again."
+                    )
                 return "legacy service_role key (correct type)"
             return f"legacy {role or 'unknown'} key — wrong one. Use service_role or a Secret key."
         return (
@@ -204,6 +280,20 @@ class Store:
             last["also_tried"] = [c["name"] for c in self.candidates]
         return last
 
+    @staticmethod
+    def _server_message(response):
+        """Supabase's own explanation, out of a JSON error body or raw text."""
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                for field in ("message", "msg", "error_description", "error", "hint"):
+                    if body.get(field):
+                        return str(body[field])[:300]
+        except Exception:  # noqa: BLE001
+            pass
+        text = (response.text or "").strip()
+        return text[:300] or None
+
     def _ping_once(self):
         try:
             response = self._client.get(
@@ -215,19 +305,61 @@ class Store:
             return {"ok": False, "state": "unreachable", "detail": f"{type(exc).__name__}: {exc}"}
 
         if response.status_code in (401, 403):
+            # Supabase's own response body names the actual cause — "Invalid
+            # API key", "Legacy API keys are disabled", a JWT error — which is
+            # the difference between guessing and knowing. Discarding it here
+            # is what made this failure cost days instead of minutes.
+            server_said = self._server_message(response)
+            lowered = (server_said or "").lower()
+            # "Permission denied" is Postgres speaking, not the auth layer —
+            # the key was ACCEPTED and then the service_role role was refused
+            # table access because its grants are missing. Every key of every
+            # generation fails identically until the grants are restored, which
+            # is indistinguishable from a wrong key unless this is said.
+            if "permission denied" in lowered:
+                return {"ok": False, "state": "no_grants",
+                        "key_looks_like": self.key_kind(),
+                        "supabase_said": server_said,
+                        "detail": (
+                            "The key is fine — Supabase accepted it. The "
+                            "database itself refused access: the service role "
+                            "holds no grants on these tables, so every key "
+                            "fails the same way. Run supabase/migrations/"
+                            "0003_grants.sql in the Supabase SQL Editor; no "
+                            "environment variable needs to change."
+                        )}
             mismatch = self.project_mismatch()
             if mismatch:
                 return {"ok": False, "state": "wrong_project",
-                        "key_looks_like": self.key_kind(), "detail": mismatch}
+                        "key_looks_like": self.key_kind(),
+                        "supabase_said": server_said, "detail": mismatch}
+            if "legacy" in lowered and ("disabled" in lowered or "expired" in lowered
+                                        or "revoked" in lowered):
+                detail = (
+                    "This Supabase project has legacy API keys disabled, so a "
+                    "service_role key is refused no matter how correctly it was "
+                    "copied. Use the new Secret key instead: Supabase dashboard "
+                    "→ Project Settings → API Keys → copy the sb_secret_… key "
+                    "into SUPABASE_SECRET_KEY (SUPABASE_SERVICE_KEY also "
+                    "works). Re-enabling legacy keys on that same page works "
+                    "too."
+                )
+            else:
+                detail = (
+                    "Supabase rejected the key. It must be the SECRET key "
+                    "(sb_secret_… or legacy service_role) — only that can read "
+                    "these tables. If the type below is already correct and "
+                    "from this project, the value is truncated, or the "
+                    "project's legacy keys were disabled, rotated or revoked — "
+                    "copy a fresh sb_secret_… key from Project Settings → API "
+                    "Keys."
+                )
             return {"ok": False, "state": "rejected",
                     "key_looks_like": self.key_kind(),
                     "project_match": "confirmed same project" if mismatch is False
                     else "could not be checked from the key",
-                    "detail":
-                    "Supabase rejected the key. It must be the SECRET key "
-                    "(sb_secret_… or legacy service_role) — only that can read "
-                    "these tables. If the type below is already correct, the "
-                    "value is truncated or from a different project."}
+                    "supabase_said": server_said,
+                    "detail": detail}
         if response.status_code == 404:
             return {"ok": False, "state": "no_tables", "detail":
                     "Connected, but the eorder_ingests table does not exist. "
@@ -318,12 +450,38 @@ class Store:
         )
         return rows[0] if rows else None
 
+    def account_by_id(self, account_id):
+        if not self.enabled or not account_id:
+            return None
+        rows = self._get(
+            "installer_accounts",
+            {"id": f"eq.{account_id}", "select": "*", "limit": "1"},
+        )
+        return rows[0] if rows else None
+
     def upsert_accounts(self, rows):
         return self._post(
             "installer_accounts",
             rows,
             prefer="resolution=merge-duplicates,return=representation",
         )
+
+    def account_has_login(self, account_id):
+        """Does any active installer login point at this account? Drives
+        whether an SMS links to /portal or the magic link."""
+        if not self.enabled or not account_id:
+            return False
+        rows = self._get(
+            "app_users",
+            {
+                "installer_account_id": f"eq.{account_id}",
+                "can_installer": "is.true",
+                "active": "is.true",
+                "select": "id",
+                "limit": "1",
+            },
+        )
+        return bool(rows)
 
     # -- portal ------------------------------------------------------------
 
@@ -347,8 +505,197 @@ class Store:
         except httpx.HTTPError:
             return []
 
+    def cache_jobs(self, rows):
+        """Upsert a whole job list in ONE request.
+
+        The portal used to call cache_job once per job, sequentially, on the
+        request's critical path — 25 jobs meant 25 PostgREST round trips before
+        the installer saw anything. PostgREST inserts a list natively.
+        """
+        if not rows:
+            return []
+        return self._post(
+            "jobs_cache", rows,
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
+
     def cached_jobs(self, installer_account_id):
         return self._get(
             "jobs_cache",
             {"installer_account_id": f"eq.{installer_account_id}", "select": "*"},
         )
+
+    def delete_cached_job(self, monday_item_id):
+        return self._delete(
+            "jobs_cache", {"monday_item_id": f"eq.{monday_item_id}"}
+        )
+
+    def latest_event(self, monday_item_id, action):
+        """The most recent portal event of one kind for an item, or None."""
+        rows = self._get(
+            "portal_events",
+            {
+                "monday_item_id": f"eq.{monday_item_id}",
+                "action": f"eq.{action}",
+                "select": "*",
+                "order": "created_at.desc",
+                "limit": "1",
+            },
+        )
+        return rows[0] if rows else None
+
+    # -- notifications -------------------------------------------------------
+    #
+    # The dedupe ledger behind every SMS and escalation: (item, kind) is
+    # unique, so a webhook retry storm produces exactly one send. `kind`
+    # carries the audience — "allocated:<account id>" — so a reallocated job
+    # texts the NEW account once without re-texting the old one.
+
+    def claim_notification(self, monday_item_id, kind, payload=None):
+        """True if this (item, kind) was claimed NOW; False if it already was.
+
+        A unique insert, not check-then-write: two concurrent webhook
+        deliveries both pass a read check, only one wins an insert. Database
+        down also returns False — an unsent SMS is recoverable (the daily
+        sweep re-evaluates), a double text to a coordinator is not.
+        """
+        rows = self._post(
+            "notifications",
+            [{
+                "monday_item_id": monday_item_id,
+                "kind": kind,
+                "payload": payload or {},
+            }],
+            prefer="resolution=ignore-duplicates,return=representation",
+        )
+        return bool(rows)
+
+    def was_notified(self, monday_item_id, kind):
+        rows = self._get(
+            "notifications",
+            {
+                "monday_item_id": f"eq.{monday_item_id}",
+                "kind": f"eq.{kind}",
+                "select": "id",
+                "limit": "1",
+            },
+        )
+        return bool(rows)
+
+    # -- app users & sessions ----------------------------------------------
+    #
+    # These back the web app's logins (0002_users.sql). Same never-raise
+    # posture as the rest of the class: callers distinguish "no such user"
+    # from "database down" via self.degraded, and index.py turns the latter
+    # into a clear error rather than a silent login failure.
+
+    # -- login throttling ----------------------------------------------------
+    #
+    # Backed by the existing portal_events table, so no new schema. Fail-open
+    # by design: with the database down these return 0/[] and the login is
+    # decided by the password alone — throttling protects credentials, it must
+    # never become the outage that locks everyone out.
+
+    def record_failed_login(self, email):
+        return self._post(
+            "portal_events",
+            [{"monday_item_id": 0, "action": "login_failed",
+              "payload": {"email": email}}],
+            prefer="return=minimal",
+        )
+
+    def recent_failed_logins(self, email, minutes=15):
+        """How many failed sign-ins this email has had in the window."""
+        if not self.enabled or not email:
+            return 0
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        rows = self._get("portal_events", {
+            "action": "eq.login_failed",
+            "payload->>email": f"eq.{email}",
+            "created_at": f"gte.{cutoff}",
+            "select": "id",
+            "limit": "25",
+        })
+        return len(rows)
+
+    def users_exist(self):
+        """True, False, or None when the database can't answer."""
+        if not self.enabled:
+            return None
+        self.degraded = None
+        rows = self._get("app_users", {"select": "id", "limit": "1"})
+        if self.degraded:
+            return None
+        return bool(rows)
+
+    def user_by_email(self, email):
+        rows = self._get(
+            "app_users", {"email": f"eq.{email}", "select": "*", "limit": "1"}
+        )
+        return rows[0] if rows else None
+
+    def user_by_id(self, user_id):
+        rows = self._get(
+            "app_users", {"id": f"eq.{user_id}", "select": "*", "limit": "1"}
+        )
+        return rows[0] if rows else None
+
+    def list_users(self):
+        return self._get("app_users", {"select": "*", "order": "created_at.asc"})
+
+    def create_user(self, fields):
+        rows = self._post("app_users", [fields])
+        return rows[0] if rows else None
+
+    def update_user(self, user_id, fields):
+        rows = self._patch("app_users", {"id": f"eq.{user_id}"}, fields)
+        return rows[0] if rows else None
+
+    def create_session(self, user_id, token_sha256, expires_at, user_agent=None):
+        rows = self._post(
+            "app_sessions",
+            [{
+                "user_id": user_id,
+                "token_sha256": token_sha256,
+                "expires_at": expires_at,
+                "user_agent": (user_agent or "")[:300] or None,
+            }],
+        )
+        return rows[0] if rows else None
+
+    def session_user(self, token_sha256):
+        """The user behind a live session token hash, or None."""
+        if not token_sha256:
+            return None
+        rows = self._get(
+            "app_sessions",
+            {
+                "token_sha256": f"eq.{token_sha256}",
+                "select": "expires_at,app_users(*)",
+                "limit": "1",
+            },
+        )
+        if not rows:
+            return None
+        session = rows[0]
+        expires = str(session.get("expires_at") or "")
+        try:
+            from datetime import datetime, timezone
+            when = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+            if when < datetime.now(timezone.utc):
+                self._delete("app_sessions", {"token_sha256": f"eq.{token_sha256}"})
+                return None
+        except ValueError:
+            return None
+        user = session.get("app_users")
+        if not user or not user.get("active"):
+            return None
+        return user
+
+    def delete_session(self, token_sha256):
+        return self._delete("app_sessions", {"token_sha256": f"eq.{token_sha256}"})
+
+    def delete_user_sessions(self, user_id):
+        return self._delete("app_sessions", {"user_id": f"eq.{user_id}"})

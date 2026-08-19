@@ -14,10 +14,13 @@ import sys
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
 
+import json  # noqa: E402
+
 import pytest  # noqa: E402
 
 from _lib import columns as columns_mod  # noqa: E402
 from _lib import config, ingest  # noqa: E402
+from _lib.monday import MondayError  # noqa: E402
 
 SAMPLES = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "samples")
@@ -28,16 +31,24 @@ SOUTHERN = "Southern_Truck_Centre__2_07_2026__EOrder.xlsx"
 
 BOARD_ID = 18426505553
 
-# A board carrying the columns this app creates, as a test board would.
+# A board carrying the columns this app creates, as a test board would. The
+# status labels are PLAIN — no emoji — because that is what monday actually
+# produces when this app's bootstrap creates the column: the emoji in the
+# requested labels are stripped. The production incident of 19 Aug 2026 was
+# the code writing "✅ Read" against a board that only knows "Read".
 BOARD_COLUMNS = [
     {"id": "file_eorder", "title": "eOrder", "type": "file"},
-    {"id": "color_status", "title": "eOrder Status", "type": "status"},
+    {"id": "color_status", "title": "eOrder Status", "type": "status",
+     "settings_str": json.dumps(
+         {"labels": {"1": "Read", "2": "Check", "3": "Failed"}})},
     {"id": "text_contact", "title": "Site Contact", "type": "text"},
     {"id": "phone_site", "title": "Site Phone", "type": "phone"},
     {"id": "email_site", "title": "Site Email", "type": "email"},
     {"id": "text_addr", "title": "Site Address", "type": "text"},
     {"id": "email_installer", "title": "Installer Email", "type": "email"},
-    {"id": "color_install", "title": "Install Required?", "type": "status"},
+    {"id": "color_install", "title": "Install Required?", "type": "status",
+     "settings_str": json.dumps(
+         {"labels": {"1": "Yes", "2": "No", "3": "Customer self-install"}})},
     {"id": "numeric_units", "title": "Units Total", "type": "numbers"},
     {"id": "date_order", "title": "Order Date", "type": "date"},
 ]
@@ -74,8 +85,31 @@ class FakeMonday:
         return []
 
     def set_columns(self, board_id, item_id, values):
+        self._enforce_labels(values)
         self.written.update(values)
         return {}
+
+    def _enforce_labels(self, values):
+        """Real monday refuses the WHOLE mutation over one unknown label.
+
+        The fake used to accept anything, which is why the emoji-label bug
+        reached production with a green test suite.
+        """
+        labels = {
+            c["id"]: list(json.loads(c["settings_str"])["labels"].values())
+            for c in self.board_columns(None)
+            if c["type"] == "status" and c.get("settings_str")
+        }
+        for column_id, value in values.items():
+            allowed = labels.get(column_id)
+            if (allowed is not None and isinstance(value, dict)
+                    and "label" in value and value["label"] not in allowed):
+                enum = ", ".join(
+                    f"{i}: {label}" for i, label in enumerate(allowed, start=1))
+                raise MondayError(
+                    "This status label doesn't exist, possible statuses "
+                    f"are: {{{enum}}}"
+                )
 
     def rename(self, board_id, item_id, name):
         self.renamed = name
@@ -151,12 +185,14 @@ def test_new_eorder_populates_and_reports_clean():
     result, monday, _ = run(KANE)
     assert result["ok"]
     assert result["status"] == "✅ Read", result.get("warnings")
-    assert monday.renamed == "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
+    # The rename rides in the main mutation now — one round trip, not two.
+    assert monday.written["name"] == "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
     assert monday.written["text_contact"] == "Gerard Cahalan"
     assert monday.written["numeric_units"] == "44.0"
     assert monday.written["color_install"] == {"label": "Yes"}
     assert monday.written["date_order"] == {"date": "2026-07-02"}
-    assert monday.written["color_status"] == {"label": "✅ Read"}
+    # Written as the board's own label — the code's "✅ Read" aligned to "Read".
+    assert monday.written["color_status"] == {"label": "Read"}
     assert "Gerard Cahalan" in monday.updates[0]
 
 
@@ -202,7 +238,7 @@ def test_a_file_that_is_not_an_eorder_fails_without_writing():
     assert monday.renamed is None
     # Only the status column is touched, to say it failed.
     assert set(monday.written) <= {"color_status"}
-    assert monday.written.get("color_status") == {"label": "❌ Failed"}
+    assert monday.written.get("color_status") == {"label": "Failed"}
     assert "Could not read eOrder" in monday.updates[0]
 
 
@@ -248,7 +284,8 @@ def test_the_order_still_lands_when_the_database_is_broken():
     result, monday, _ = run(KANE, store=FakeStore(broken=True))
     assert result["ok"]
     assert result["status"] == "✅ Read"
-    assert monday.renamed == "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
+    # The rename rides in the main mutation now — one round trip, not two.
+    assert monday.written["name"] == "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
     assert result["database"] == "simulated failure"
 
 
@@ -301,4 +338,159 @@ def test_an_upload_still_runs_when_files_are_present():
                          "value": {"files": [{"name": "eorder.xlsx"}]}}}
     result = ingest.handle_webhook(payload, monday, FakeStore())
     assert result["ok"] and result["status"] == "✅ Read"
-    assert monday.renamed.startswith("KANE CIVIL")
+    assert monday.written["name"].startswith("KANE CIVIL")
+
+
+def test_odd_column_settings_never_crash_label_parsing():
+    """json.loads accepts "null" and "[]"; .get on the result raised inside
+    resolved(), outside ingest's guards — one odd status column on the board
+    failed every ingest. Found in adversarial review before it shipped far.
+
+    Unrecognised shapes must come back None ("unknown"), not [] ("no
+    labels") — the writer drops labels a column doesn't have but passes
+    through columns it knows nothing about, so conflating the two would
+    silently discard every status write to such a column."""
+    from _lib.columns import _parse_labels
+    assert _parse_labels(None) is None
+    assert _parse_labels("") is None
+    assert _parse_labels("null") is None
+    assert _parse_labels("[]") is None
+    assert _parse_labels("not json at all") is None
+    assert _parse_labels('{"labels":{"1":"Read","2":null}}') == ["Read"]
+    assert _parse_labels('{"labels":{}}') == []   # genuinely no labels
+
+
+# -- status labels are the board's, not the code's (incident of 19 Aug 2026) --
+
+class EmojiBoard(FakeMonday):
+    """A board whose status labels DID keep their emoji."""
+
+    def board_columns(self, board_id):
+        columns = [dict(c) for c in BOARD_COLUMNS]
+        for column in columns:
+            if column["id"] == "color_status":
+                column["settings_str"] = json.dumps(
+                    {"labels": {"1": "✅ Read", "2": "⚠️ Check", "3": "❌ Failed"}})
+        return columns
+
+
+def test_a_board_with_emoji_labels_gets_the_emoji_spelling():
+    result, monday, _ = run(KANE, monday=EmojiBoard(blob(KANE)))
+    assert result["ok"]
+    assert monday.written["color_status"] == {"label": "✅ Read"}
+
+
+class ForeignLabels(FakeMonday):
+    """A board whose Install Required column has labels this app never writes."""
+
+    def board_columns(self, board_id):
+        columns = [dict(c) for c in BOARD_COLUMNS]
+        for column in columns:
+            if column["id"] == "color_install":
+                column["settings_str"] = json.dumps(
+                    {"labels": {"1": "Installed by us", "2": "Not needed"}})
+        return columns
+
+
+def test_an_unmatchable_label_is_dropped_and_reported_not_fatal():
+    """One unknown label used to fail the whole mutation — every field lost,
+    the order stamped Failed, and the only trace a MondayError in an Update.
+    And a dropped value is a silent field loss, so the row must flag ⚠️ Check
+    — the at-a-glance filter is the whole point of the status column."""
+    result, monday, _ = run(KANE, monday=ForeignLabels(blob(KANE)))
+    assert result["ok"]
+    assert "color_install" not in monday.written          # dropped, not fatal
+    assert monday.written["text_contact"] == "Gerard Cahalan"   # rest landed
+    assert monday.written["color_status"] == {"label": "Check"}
+    assert result["status"] == "⚠️ Check"
+    assert any("does not exist" in w and "install_required" in w
+               for w in result["warnings"])
+
+
+# -- multi-site subitems must not take down the order (§8.4) -----------------
+
+class SubitemValuesRejected(FakeMonday):
+    """Subitems live on their own board; the parent board's column IDs are
+    invalid there, so real monday rejects any subitem write that carries them."""
+
+    def create_subitem(self, parent, name, values=None):
+        if values:
+            raise MondayError("Column not found on this board")
+        return super().create_subitem(parent, name, values)
+
+
+def test_multi_site_orders_survive_subitem_column_rejection(monkeypatch):
+    parsed = {
+        "opportunity_id": "006TESTMULTI", "company": "QUALITYVEND",
+        "derived_item_name": "QUALITYVEND = 12 x AT551",
+        "order_reason": "Add-On", "order_date": "July 2, 2026",
+        "ship_to_type": "multiple", "install_required": "Yes",
+        "site_contact_name": "A Person", "site_contact_phone": "0400000000",
+        "multi_site": [{"company": "Site A", "qty": 4},
+                       {"company": "Site B", "qty": 8}],
+        "lines": [{"qty": 12, "product": "AT551 Asset Tracker Service"}],
+        "_warnings": [],
+    }
+
+    class StubParser:
+        ACV_ORDER_REASONS = ["New Business"]
+
+        @staticmethod
+        def parse(handle):
+            return dict(parsed)
+
+    monkeypatch.setattr(ingest, "_parser", lambda: StubParser)
+    result, monday, _ = run(KANE, monday=SubitemValuesRejected(blob(KANE)))
+    assert result["ok"], result.get("reason")
+    # Both sites exist as subitems, created bare after the values were refused.
+    assert monday.subitems_created == ["Site A — 4 units", "Site B — 8 units"]
+    assert monday.written["color_status"] == {"label": "Check"}
+
+
+# -- the failure path itself must not have failure modes ----------------------
+
+def test_catchall_failures_still_stamp_failed_from_board_columns(monkeypatch):
+    """The catch-all path reaches _fail with no resolved columns. It must
+    resolve the status column from the board so ❌ Failed shows on the row —
+    before, a catastrophic failure left the status blank and the Update was
+    the only trace."""
+    def explode(*args, **kwargs):
+        raise RuntimeError("simulated catastrophic failure")
+
+    monkeypatch.setattr(ingest, "_run", explode)
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    monday = FakeMonday(blob(KANE))
+    result = ingest.handle_webhook(
+        {"event": {"pulseId": 123, "boardId": BOARD_ID}}, monday, FakeStore())
+    assert not result["ok"]
+    assert monday.written.get("color_status") == {"label": "Failed"}
+    assert "Could not read eOrder" in monday.updates[0]
+
+
+def test_the_update_still_posts_when_the_status_write_is_refused():
+    """Reporting must not depend on the status column cooperating: if monday
+    refuses the ❌ Failed write, the person still needs the explanation."""
+    class RefusesWrites(FakeMonday):
+        def set_columns(self, board_id, item_id, values):
+            raise MondayError("simulated refusal")
+
+    monday = RefusesWrites(b"this is not a spreadsheet")
+    result, monday, _ = run(KANE, monday=monday)
+    assert not result["ok"]
+    assert monday.written == {}
+    assert any("Could not read eOrder" in u for u in monday.updates)
+
+
+def test_events_for_another_board_are_turned_away():
+    """The webhook is registered on one board; a delivery naming another —
+    misconfiguration or someone probing the public endpoint — must end before
+    any monday call is made."""
+    columns_mod.clear_cache()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    monday = FakeMonday(blob(KANE))
+    result = ingest.handle_webhook(
+        {"event": {"pulseId": 123, "boardId": 999}}, monday, FakeStore())
+    assert not result["ok"]
+    assert "not the orders board" in result["reason"]
+    assert monday.written == {} and monday.updates == [] and monday.downloads == 0
