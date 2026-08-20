@@ -2,6 +2,7 @@ import Nav from "../Nav";
 import ThemeSwitcher from "../theme";
 import NotificationsForm from "./NotificationsForm";
 import PasswordForm from "./PasswordForm";
+import ProfileForm from "./ProfileForm";
 import { getSettings } from "@/lib/api";
 import { requireViewer, sessionToken } from "@/lib/auth";
 
@@ -30,12 +31,16 @@ export default async function Settings() {
         </div>
 
         <div className="panel">
-          <h2>Appearance</h2>
+          <h2>My profile</h2>
           <p>
-            Light, dark, or follow this device. Remembered per browser — it
-            only changes what you see.
+            Your name, and where you&rsquo;re signed in. What you can{" "}
+            <i>see</i> is set per login by an admin on the Users page.
           </p>
-          <ThemeSwitcher />
+          <ProfileForm
+            name={realUser.name}
+            email={realUser.email}
+            readOnly={previewing}
+          />
         </div>
 
         <div className="panel">
@@ -53,6 +58,15 @@ export default async function Settings() {
           ) : (
             <PasswordForm />
           )}
+        </div>
+
+        <div className="panel">
+          <h2>Appearance</h2>
+          <p>
+            Light, dark, or follow this device. Remembered per browser — it
+            only changes what you see.
+          </p>
+          <ThemeSwitcher />
         </div>
 
         <div className="panel">

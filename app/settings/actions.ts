@@ -1,17 +1,22 @@
 "use server";
 
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import {
   authChangePassword,
+  logoutAll,
   saveSettings,
   sendTestEmail,
+  updateProfile,
   type NotificationSettings,
 } from "@/lib/api";
-import { sessionToken } from "@/lib/auth";
+import { SESSION_COOKIE, sessionToken } from "@/lib/auth";
 
 /**
- * Admin-only writes for /settings. The session cookie is read here, server
- * side, and the Python half checks it belongs to an admin — the browser's
- * word for it is never enough.
+ * Writes for /settings. The session cookie is read here, server side, and
+ * the Python half decides what it may do — notification config needs an
+ * admin, the profile actions only need to be you. The browser's word for
+ * either is never enough.
  */
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -47,6 +52,32 @@ export async function saveNotificationsAction(
   } catch (error) {
     return failed(error);
   }
+}
+
+export async function updateProfileAction(name: string): Promise<Result> {
+  const session = await sessionToken();
+  if (!session) return { ok: false, error: "signed out — reload the page" };
+  try {
+    await updateProfile(session, { name });
+    return { ok: true };
+  } catch (error) {
+    return failed(error);
+  }
+}
+
+/** Ends every session, this one included, then lands on /login. */
+export async function signOutEverywhereAction(): Promise<void> {
+  const session = await sessionToken();
+  if (session) {
+    try {
+      await logoutAll(session);
+    } catch {
+      // The cookie still goes; orphaned rows expire on their own.
+    }
+  }
+  const jar = await cookies();
+  jar.delete(SESSION_COOKIE);
+  redirect("/login");
 }
 
 export async function sendTestEmailAction(): Promise<

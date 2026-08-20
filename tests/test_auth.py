@@ -124,8 +124,11 @@ def test_my_jobs_requires_a_session():
     assert client().get("/api/py/portal/my-jobs").status_code == 401
 
 
-def test_changing_a_password_requires_a_session():
-    assert client().post("/api/py/auth/change-password", json={}).status_code == 401
+def test_account_self_service_requires_a_session():
+    assert client().post("/api/py/auth/profile", json={"name": "x"}).status_code == 401
+    assert client().post("/api/py/auth/change-password",
+                         json={"current_password": "a", "new_password": "b"}).status_code == 401
+    assert client().post("/api/py/auth/logout-all").status_code == 401
 
 
 def test_settings_require_a_session():
@@ -474,3 +477,36 @@ def test_the_activity_feed_merges_webhooks_and_file_reads(monkeypatch):
     assert data["events"][1]["payload"]["file"] == "b.xlsx"
     assert data["events"][1]["payload"]["took"] == "5.5s"
     assert data["events_total"] == 1
+
+
+# -- account self-service round trips ---------------------------------------
+#
+# The password-change round trips live above with the other password tests —
+# these cover the rest of the self-service surface: rename and logout-all.
+
+def test_profile_rename_reflects_immediately(monkeypatch):
+    wired(monkeypatch)
+    c = client()
+    token = bootstrap_admin(c)["token"]
+    ok = c.post("/api/py/auth/profile", json={"name": "  Alex Morgan  "},
+                headers={"X-Session": token})
+    assert ok.status_code == 200
+    assert ok.json()["user"]["name"] == "Alex Morgan"
+    me = c.get("/api/py/auth/me", headers={"X-Session": token}).json()
+    assert me["user"]["name"] == "Alex Morgan"
+    # An empty name is refused, not saved.
+    assert c.post("/api/py/auth/profile", json={"name": "  "},
+                  headers={"X-Session": token}).status_code == 400
+
+
+def test_logout_all_kills_every_session_including_this_one(monkeypatch):
+    wired(monkeypatch)
+    c = client()
+    token = bootstrap_admin(c)["token"]
+    other = c.post("/api/py/auth/login",
+                   json={"email": "admin@navtek.au",
+                         "password": "long enough now"}).json()["token"]
+    assert c.post("/api/py/auth/logout-all",
+                  headers={"X-Session": token}).status_code == 200
+    assert c.get("/api/py/auth/me", headers={"X-Session": token}).status_code == 401
+    assert c.get("/api/py/auth/me", headers={"X-Session": other}).status_code == 401

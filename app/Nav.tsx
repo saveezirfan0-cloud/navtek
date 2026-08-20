@@ -76,6 +76,7 @@ export default function Nav({
         name={who.name}
         email={who.email}
         isAdmin={who.is_admin}
+        searchOrders={user.can_orders || user.is_admin}
       />
       {previewing && (
         <div className="preview-bar">
