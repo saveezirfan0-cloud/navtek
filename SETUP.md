@@ -357,9 +357,12 @@ one that would process every file twice.
 
 The same press also registers the installer-flow webhooks — on the
 **Installer**, dispatch-date and **Status** columns — so reallocations and
-direct edits in monday reach the portal within seconds. Columns that don't
-exist yet are skipped and reported, and running the step again after they're
-created picks them up. All idempotent: nothing is ever registered twice.
+direct edits in monday reach the portal within seconds, and the
+auto-onboarding webhooks on the Installer Accounts board (if it exists yet),
+so accounts added there sync and email their own portal links. Columns and
+boards that don't exist yet are skipped and reported, and running the step
+again after they're created picks them up. All idempotent: nothing is ever
+registered twice.
 
 **5 — Check everything works.** Press **Run the check**. It tests the monday
 token, the board, the columns, the parser, the webhook and the database, and
@@ -425,7 +428,17 @@ boards. The old free-text `installer` column is left where it is, as history.
 
 **B — Copy the installers into the database.** The portal looks a magic link up
 in the database, so an account added in monday stays invisible until this runs.
-Run it again whenever you add, deactivate or reissue an account.
+
+You only need this button for catch-up. Step A (or step 4) also registers
+**auto-onboarding webhooks on the Installer Accounts board itself**, and from
+then on the board looks after itself: add a row and it gets a portal token and
+its Active tick within seconds, the database copy updates on its own, and — if
+the row has a Coordinator email and the email variables from 5.3's optional
+table are set — the coordinator is emailed their portal link automatically.
+The same applies to edits: reissue a token and the new link is emailed; untick
+Active and the old link stops working after the sync that follows. Each link
+is emailed exactly once per (token, address) pair, so webhook retries never
+double-send.
 
 ### Switching on the SLA engine *(after the portal is in use)*
 
@@ -578,11 +591,16 @@ duplicates monday's own log shows as Success. **SLA** is the contact clock.
 **Activity** is the merged audit trail. All of them page — nothing silently
 caps at the newest rows any more.
 
-**Adding an installer:** add a row to the Installer Accounts board, fill in the
-coordinator details, put a long random string in Portal token, tick Active,
-then press Setup step 5.
+**Adding an installer:** add a row to the Installer Accounts board and fill in
+the coordinator details — that's it. Auto-onboarding issues the token, ticks
+Active, syncs the database and emails the coordinator their link (when an
+email provider is configured; otherwise copy the link from the Installers
+page). If the webhooks aren't registered yet — accounts added before this
+update — press Setup step A once, then Sync installers to catch up.
 
-**Cutting off access:** change that account's Portal token, press step 5.
+**Cutting off access:** untick that account's Active box (or change its Portal
+token) in monday — the sync follows on its own. The Sync installers button
+remains the manual fallback.
 
 **Changing the code:** edit the file on GitHub and commit. Vercel redeploys
 within a minute or two, on its own.
