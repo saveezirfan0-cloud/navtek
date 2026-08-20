@@ -529,6 +529,38 @@ def test_reallocation_restarts_the_sla_clock():
 # Prompt 5 — the portal cache stays honest
 # ===========================================================================
 
+def test_a_write_back_to_another_accounts_job_is_refused():
+    """The account is authenticated; the item_id is client input. Any valid
+    magic link could otherwise write to any row on the orders board."""
+    store = FlowStore([ACCOUNT_A, ACCOUNT_B])
+    monday = FlowMonday([make_item(1, installer="GPS Tech",
+                                   dispatched="2026-08-10")])
+    with pytest.raises(PermissionError):
+        portal.apply_action(monday, store, ACCOUNT_B,
+                            item_id="1", action="contacted")
+    assert monday.written == []
+
+    # The rightful account's write-back goes through.
+    result = portal.apply_action(monday, store, ACCOUNT_A,
+                                 item_id="1", action="contacted")
+    assert result["ok"]
+
+
+def test_ownership_falls_back_to_the_cache_and_silence_denies():
+    store = FlowStore([ACCOUNT_A, ACCOUNT_B])
+    store.cache_job(1, {"item_id": "1"}, installer_account_id="acc-a")
+
+    class NoMonday(FlowMonday):
+        def item(self, item_id):
+            raise RuntimeError("monday is down")
+
+    portal.require_ownership(NoMonday(), store, ACCOUNT_A, 1)   # cached → ok
+    with pytest.raises(PermissionError):
+        portal.require_ownership(NoMonday(), store, ACCOUNT_B, 1)
+    with pytest.raises(PermissionError):
+        portal.require_ownership(NoMonday(), store, ACCOUNT_A, 999)
+
+
 def test_refresh_item_rewrites_the_cache_row():
     store = FlowStore([ACCOUNT_A])
     monday = FlowMonday([make_item(1, installer="GPS Tech",

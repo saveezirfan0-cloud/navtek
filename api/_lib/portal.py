@@ -335,21 +335,60 @@ def refresh_item(monday, store, item_id):
             "account": account["account_name"] if account else None}
 
 
-def _account_for_item(store, item, cols):
-    """The installer account an item is allocated to, by the Installer column.
+def _linked_account_names(item, cols):
+    """The account names on an item's Installer connect column, lowercased.
 
-    Exact name match against the synced accounts — the portal's own query uses
-    the same value, so the two can never disagree about whose job this is.
+    A connect column's text is the linked items' names, comma-joined when
+    someone links more than one — split so a legitimate account is never
+    denied because a second one shares the column.
     """
     values = {c["id"]: c for c in item.get("column_values", [])}
     column_id = cols.get("installer")
-    name = (values.get(column_id, {}).get("text") or "").strip() if column_id else ""
-    if not name:
+    text = (values.get(column_id, {}).get("text") or "") if column_id else ""
+    return {n.strip().lower() for n in text.split(",") if n.strip()}
+
+
+def _account_for_item(store, item, cols):
+    """The installer account an item is allocated to, by the Installer column.
+
+    Name match against the synced accounts — the portal's own query uses the
+    same value, so the two can never disagree about whose job this is.
+    """
+    names = _linked_account_names(item, cols)
+    if not names:
         return None
     for account in store.installer_accounts():
-        if str(account["account_name"]).strip().lower() == name.lower():
+        if str(account["account_name"]).strip().lower() in names:
             return account
     return None
+
+
+def require_ownership(monday, store, account, item_id):
+    """Prove server-side that this job is allocated to this account, or raise.
+
+    The portal authenticates the ACCOUNT (magic link or login); this is the
+    other half — the item_id in the request body is client input, and without
+    this check any valid link could write to any row on the orders board.
+    Live monday (the Installer column) is the authority; when monday can't
+    answer, the account's own cache rows decide — and silence denies, because
+    a write to a job we cannot prove is yours must not happen.
+    """
+    denied = PermissionError("this job isn't allocated to your account")
+    try:
+        item = monday.item(item_id)
+    except Exception:  # noqa: BLE001 - fall back to the cache
+        item = None
+    if item is not None:
+        names = _linked_account_names(item, columns_mod.resolved(monday))
+        if str(account["account_name"]).strip().lower() in names:
+            return
+        raise denied
+    for row in store.cached_jobs(account["id"]):
+        data = row.get("data") or {}
+        if (str(data.get("item_id")) == str(item_id)
+                or str(row.get("monday_item_id")) == str(item_id)):
+            return
+    raise denied
 
 
 def resync(monday, store):
@@ -383,6 +422,10 @@ ACTIONS = {"contacted", "booked", "progress", "completed", "blocked"}
 def apply_action(monday, store, account, item_id, action, value=None, note=None):
     if action not in ACTIONS:
         raise ValueError(f"unknown action: {action}")
+
+    # The account is authenticated; the item_id is not — it is client input,
+    # and every write-back must first prove the job is this account's.
+    require_ownership(monday, store, account, item_id)
 
     cols = columns_mod.resolved(monday)
     today = date.today().isoformat()

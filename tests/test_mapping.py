@@ -592,6 +592,32 @@ def test_single_site_orders_never_run_the_check():
     assert not any("add up to" in w for w in warnings)
 
 
+def test_the_parsers_own_quantity_warnings_are_silenced():
+    """The parser nags "reconcile the split manually" whenever any site's
+    free-text notes didn't parse, and runs its own sum against a total that
+    counts the commissions line. Prompt 8's rule — an unreadable site means
+    silence — is enforced here even though the parser ships unchanged."""
+    noisy = _multi([{"qty": 40}, {"qty": None}])
+    noisy["_warnings"] = [
+        "could not read a quantity from every site's notes — "
+        "reconcile the split manually",
+        "site quantities sum to 40 but the order is for 45",
+    ]
+    status, warnings = mapping.validate(noisy)
+    assert not any("quantit" in w.lower() for w in warnings), warnings
+
+    # And when every site DID parse, the one surviving check is mapping's own
+    # (hardware-only total), not the parser's inflated one.
+    both = _multi([{"qty": 40}, {"qty": 3}])
+    both["_warnings"] = ["site quantities sum to 43 but the order is for 45"]
+    status, warnings = mapping.validate(both)
+    assert status == mapping.STATUS_CHECK
+    quantity_warnings = [w for w in warnings if "quantit" in w.lower()]
+    assert quantity_warnings == [
+        "site quantities add up to 43 but the order has 44 units — check the split"
+    ]
+
+
 def test_customer_self_install_survives_alignment_exactly():
     aligned, dropped = mapping.align_status_values(
         {"s": {"label": "Customer self-install"}},

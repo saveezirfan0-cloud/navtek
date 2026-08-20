@@ -287,6 +287,16 @@ def validate(parsed, installer_match=None):
     """
     warnings = list(parsed.get("_warnings") or [])
 
+    # The site-quantity reconciliation is owned HERE (FINALIZE prompt 8): it
+    # runs only when every site's quantity parsed, against the hardware-only
+    # total. The parser's own two versions — the "reconcile the split
+    # manually" nag whenever any site's free-text notes didn't parse, and its
+    # sum comparison against a line total that counts the commissions line —
+    # are dropped, so the rule has one implementation and an unreadable site
+    # means silence, not a ⚠️ Check on every multi-site order.
+    warnings = [w for w in warnings
+                if not ("quantit" in w.lower() and "site" in w.lower())]
+
     def already_flagged(*needles):
         return any(
             all(needle in warning for needle in needles) for warning in warnings
