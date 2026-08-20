@@ -243,10 +243,20 @@ left, value on the right, click **Add**.
 | `WEBHOOK_SECRET` | *(optional but recommended)* a third random string. With it set, the monday webhook URL carries a token and the automation rejects anything else that posts to it. Set it before running Setup step 4 — or set it later and run step 4 again. |
 | `CRON_SECRET` | *(optional)* a random string. Vercel sends it with the daily SLA sweep so nothing else can trigger it. |
 | `SLA_GO_LIVE_DATE` | *(leave unset until go-live)* `YYYY-MM-DD`. Only jobs dispatched on or after this date ever enter the SLA sweep — everything older is backlog reconciled by hand. Unset = the sweep is off. |
-| `SLA_NOTIFICATIONS_ENABLED` | `false`. The sweep runs in shadow mode — recording breaches and logging what it *would* text — until this is explicitly `true`. Read a week of shadow output first. |
+| `SLA_NOTIFICATIONS_ENABLED` | `false`. The sweep runs in shadow mode — recording breaches and logging what it *would* text — until this is explicitly `true`. Read a week of shadow output first (the **SLA** page shows it). |
 
 Check for stray spaces at the start or end of each pasted value. That is the
 single most common cause of "it says my token is wrong".
+
+**Optional switches** — each one lights up a feature when set, and the app
+runs fine without it:
+
+| Name | Value |
+|---|---|
+| `MONDAY_ACCOUNT_SLUG` | the first part of your monday address — for `https://navtek.monday.com/…` it is `navtek`. With it set, every order in the app links straight to its board row; without it they're plain text. |
+| `MONDAY_SIGNING_SECRET` | *(recommended)* monday → your profile picture → **Developers** → your app → **Basic Information** → **Signing Secret**. With it set, the webhook endpoints verify every delivery really came from monday and turn away anything else. Until it (or `WEBHOOK_SECRET`) is set, the dashboard shows a warning that the webhooks run open. |
+| `LOG_RETENTION_DAYS` | how many days of webhook-delivery and activity history to keep (default `180`; `0` keeps everything forever). The daily sweep purges older rows. |
+| `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` | set all three (from twilio.com → Console) and the installer SMS goes out as real texts. `TWILIO_FROM` is your Twilio number in `+61…` form, or a Messaging Service SID. Unset, sends go to the logs only — safe for testing. |
 
 ### 5.4 Deploy
 
@@ -427,10 +437,12 @@ moves, in this order:
    older stays a by-hand reconciliation.
 
    With just this set the engine runs in **shadow mode**: the daily sweep
-   computes ages, records breaches, and logs what it *would* send — visible in
-   the Vercel function logs — but sends nothing and touches no status.
+   computes ages, records breaches, and logs what it *would* send — but sends
+   nothing and touches no status. The **SLA** page in the top navigation
+   (admin only) shows all of it: the mode banner, every job on the clock with
+   its countdown, and what recent sweeps claimed.
 
-2. **Go live.** After a week of real orders, read the shadow log. When it
+2. **Go live.** After a week of real orders, read the SLA page. When it
    would have texted the right people about the right jobs, set
    `SLA_NOTIFICATIONS_ENABLED` to `true` and redeploy.
 
@@ -441,8 +453,9 @@ already defines, so nobody else can trigger them. Each installer account has a
 skips that state's public holidays. Blank means NSW. Re-run setup step A once
 after this update to add the column, and step B to sync it.
 
-The SMS itself currently goes to a **log, not a phone** — the provider
-(Twilio or similar) is a one-module change in `api/_lib/sms.py` once chosen.
+The SMS itself goes to a **log, not a phone**, until the three `TWILIO_*`
+variables from step 5.3's optional table are set — then it sends real texts
+through Twilio. No code change needed.
 
 ---
 
@@ -552,6 +565,13 @@ plain English — that's the first place to look, not the last.
 ---
 
 # Day-to-day
+
+**Reading what happened:** **Orders** is every eOrder read (searchable over
+the whole history — click an order for its full story, including the file).
+**Deliveries** is every webhook call monday made, including the skipped
+duplicates monday's own log shows as Success. **SLA** is the contact clock.
+**Activity** is the merged audit trail. All of them page — nothing silently
+caps at the newest rows any more.
 
 **Adding an installer:** add a row to the Installer Accounts board, fill in the
 coordinator details, put a long random string in Portal token, tick Active,
