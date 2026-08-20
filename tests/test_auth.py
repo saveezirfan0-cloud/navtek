@@ -343,3 +343,37 @@ def test_the_sweep_needs_the_portal_secret_or_the_cron_secret(monkeypatch):
 
 def test_the_activity_feed_is_admin_only():
     assert client().get("/api/py/activity").status_code == 401
+
+
+def test_the_activity_feed_merges_webhooks_and_file_reads(monkeypatch):
+    fake = wired(monkeypatch)
+    fake.events_page = lambda limit=50, offset=0: ([
+        {"action": "viewed", "monday_item_id": 1, "installer_account_id": None,
+         "payload": {}, "created_at": "2026-08-20T01:00:00+00:00"},
+    ], 1)
+    fake.webhook_page = lambda limit=25, offset=0, outcome=None, q=None: ([
+        {"monday_item_id": 2, "opportunity_id": "006X", "file_name": "a.xlsx",
+         "outcome": "skipped", "reason": "identical file already read",
+         "status": None, "duration_ms": 900,
+         "created_at": "2026-08-20T03:00:00+00:00"},
+    ], 1)
+    fake.ingest_page = lambda limit=20, offset=0, status=None, q=None: ([
+        {"monday_item_id": 3, "opportunity_id": "006Y", "file_name": "b.xlsx",
+         "status": "check", "warnings": ["phone: vanity number converted"],
+         "changed_fields": [], "error": None, "duration_ms": 5500,
+         "created_at": "2026-08-20T02:00:00+00:00"},
+    ], 1)
+    fake.notifications_page = lambda limit=50, offset=0: ([], 0)
+    fake.reasons_page = lambda limit=50, offset=0: ([], 0)
+
+    c = client()
+    token = bootstrap_admin(c)["token"]
+    data = c.get("/api/py/activity", headers={"X-Session": token}).json()
+
+    # One timeline, newest first, each source under its own action kind.
+    assert [e["action"] for e in data["events"]] == \
+        ["webhook_skipped", "file_check", "viewed"]
+    assert data["events"][0]["payload"]["detail"] == "identical file already read"
+    assert data["events"][1]["payload"]["file"] == "b.xlsx"
+    assert data["events"][1]["payload"]["took"] == "5.5s"
+    assert data["events_total"] == 1

@@ -365,7 +365,7 @@ export async function authMe(session: string): Promise<AuthUser | null> {
 
 export type ActivityEvent = {
   action: string;
-  monday_item_id: number;
+  monday_item_id: number | null;
   installer_account_id: string | null;
   payload: Record<string, unknown>;
   created_at: string;

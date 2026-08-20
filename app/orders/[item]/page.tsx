@@ -68,6 +68,17 @@ export default async function OrderPage({
                 </a>
               </>
             )}
+            {reads.length > 0 && itemId && (
+              <>
+                {" · "}
+                {/* monday asset URLs expire hourly; the endpoint mints a
+                    fresh one per click. */}
+                <a href={`/api/py/eorder/file?item_id=${itemId}`}
+                   target="_blank" rel="noreferrer">
+                  ⬇ eOrder file
+                </a>
+              </>
+            )}
             {" · "}
             <Link href="/">back to Orders</Link>
           </p>

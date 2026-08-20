@@ -315,7 +315,11 @@ Read it. Anything already there shows as `exists` and is left alone.
 
 **2 — Create the columns.** *This changes the live TN Orders board.* It adds
 the missing columns and shows the ID of each. Nothing existing is renamed,
-moved or deleted.
+moved or deleted. The same run prepares the install-item field set on the
+subitem board (contact, phone, address, units, dates, Installer link) so
+multi-site orders land with their fields visible — if the board has no
+subitems yet, that part is skipped and happens automatically with the first
+multi-site order.
 
 **3 — Check the columns were found.** Press **Check columns**. You want
 `unmapped: []`.

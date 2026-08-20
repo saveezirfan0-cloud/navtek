@@ -830,7 +830,15 @@ def setup_plan(x_setup_key: str = Header(default="")):
 @app.post("/api/py/setup/columns")
 def setup_columns(x_setup_key: str = Header(default="")):
     _setup_guard(x_setup_key)
-    return bootstrap.create_columns(Monday())
+    monday = Monday()
+    result = bootstrap.create_columns(monday)
+    # The install-item (subitem) field set rides along: multi-site orders
+    # would create it on first use anyway, but preparing it here lets the
+    # columns be checked before a live multi-site order arrives.
+    subitems = bootstrap.prepare_subitem_columns(monday)
+    result["log"].extend(subitems["log"])
+    result["subitem_columns_prepared"] = subitems["prepared"]
+    return result
 
 
 @app.post("/api/py/setup/installers")
@@ -921,23 +929,83 @@ def activity(
     x_portal_secret: str = Header(default=""),
     x_session: str = Header(default=""),
 ):
-    """The audit trail, for admins: portal events (views, write-backs, failed
-    logins, SLA breaches) and unrecognised order reasons. Each table pages
-    independently — they used to cap at their newest rows with no way back."""
+    """The audit trail, for admins: one merged timeline — portal events
+    (views, write-backs, failed logins, SLA breaches), webhook deliveries and
+    file reads — plus the notification ledger and unrecognised order reasons.
+
+    Each section pages independently. The timeline merges three tables that
+    PostgREST cannot UNION, so a page is a window: the next 50 of EACH source
+    at that offset, interleaved newest-first. Rows within a source are never
+    skipped; totals drive the pager off the deepest source.
+    """
     _authorise(x_portal_secret)
     store = Store()
     _require_admin(_session_user(store, x_session))
     page = 50
-    events, events_total = store.events_page(
-        page, max(0, events_offset))
+    offset = max(0, events_offset)
+
+    def took(ms):
+        return f"{ms / 1000:.1f}s" if ms else None
+
+    events, events_total = store.events_page(page, offset)
+    feed = [
+        {
+            "action": e.get("action"),
+            "monday_item_id": e.get("monday_item_id"),
+            "installer_account_id": e.get("installer_account_id"),
+            "payload": e.get("payload") or {},
+            "created_at": e.get("created_at"),
+        }
+        for e in events
+    ]
+
+    # Webhook deliveries — "a file was dropped / monday called us", including
+    # the skips and no-file deliveries monday's own log shows as Success. An
+    # absent webhook_log table (0004 not run) degrades to an empty list.
+    hooks, hooks_total = store.webhook_page(page, offset)
+    for h in hooks:
+        feed.append({
+            "action": f"webhook_{h.get('outcome') or 'processed'}",
+            "monday_item_id": h.get("monday_item_id"),
+            "installer_account_id": None,
+            "payload": {
+                "file": h.get("file_name"),
+                "order": h.get("opportunity_id"),
+                "detail": h.get("reason") or h.get("status"),
+                "took": took(h.get("duration_ms")),
+            },
+            "created_at": h.get("created_at"),
+        })
+
+    # File reads — what the parser made of each upload.
+    reads, reads_total = store.ingest_page(page, offset)
+    for r in reads:
+        notes = r.get("error") or " · ".join(
+            [*(r.get("changed_fields") or []), *(r.get("warnings") or [])][:3]
+        )
+        feed.append({
+            "action": f"file_{r.get('status') or 'read'}",
+            "monday_item_id": r.get("monday_item_id"),
+            "installer_account_id": None,
+            "payload": {
+                "file": r.get("file_name"),
+                "order": r.get("opportunity_id"),
+                "detail": notes or None,
+                "took": took(r.get("duration_ms")),
+            },
+            "created_at": r.get("created_at"),
+        })
+
+    feed.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+
     notifications, notifications_total = store.notifications_page(
         page, max(0, notifications_offset))
     reasons, reasons_total = store.reasons_page(
         page, max(0, reasons_offset))
     return {
         "page_size": page,
-        "events": events,
-        "events_total": events_total,
+        "events": feed,
+        "events_total": max(events_total, hooks_total, reads_total),
         "notifications": notifications,
         "notifications_total": notifications_total,
         "unknown_order_reasons": reasons,

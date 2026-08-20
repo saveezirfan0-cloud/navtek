@@ -73,6 +73,32 @@ def create_columns(monday, board_id=None):
     return {"column_ids": resolved, "log": log}
 
 
+def prepare_subitem_columns(monday, board_id=None):
+    """Give the subitem board the install-item field set, if it exists yet.
+
+    Subitems live on their own board with their own column IDs, and that board
+    only comes into existence with the board's first-ever subitem. Multi-site
+    orders prepare the columns themselves on first use; running this from
+    Setup makes them visible up front on any board that already has subitems,
+    so the field set can be checked before a live multi-site order arrives.
+    """
+    from . import ingest
+
+    board_id = board_id or config.ORDERS_BOARD_ID
+    sub_board = ingest._subitem_board_id(monday, board_id)
+    if not sub_board:
+        return {"prepared": False, "log": [
+            "skipped  install-item columns — this board has no subitems yet; "
+            "the columns are created automatically with the first multi-site "
+            "order"
+        ]}
+    ingest._SUB_COLS_CACHE.pop(str(sub_board), None)
+    cols = ingest._ensure_subitem_columns(monday, sub_board)
+    return {"prepared": True, "subitem_board_id": sub_board, "log": [
+        f"ready    install-item columns on the subitem board ({len(cols)} fields)"
+    ]}
+
+
 def create_installer_link(monday, installers_board_id, orders_board_id=None):
     """The Installer connect-boards column on TN Orders.
 

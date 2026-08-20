@@ -281,6 +281,10 @@ td.num { font-variant-numeric: tabular-nums; color: var(--mid); white-space: now
   font-family: inherit; margin-right: 8px; }
 .act.ghost { background: var(--card); color: var(--navy-2); border: 1.5px solid var(--input-border); }
 .act:disabled { opacity: .5; cursor: default; }
+.filelink { display: inline-block; white-space: nowrap; padding: 4px 10px;
+  border: 1.5px solid var(--input-border); border-radius: 8px; font-size: 13.5px;
+  font-weight: 650; color: var(--navy-2); text-decoration: none; }
+.filelink:hover { background: var(--hover-bg); }
 
 .field {
   width: 100%; padding: 11px 13px; border: 1.5px solid var(--input-border); border-radius: 10px;

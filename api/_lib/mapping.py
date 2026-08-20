@@ -543,6 +543,39 @@ def update_body(parsed, status, warnings, field_count, changes=None):
     return "<br>".join(lines)
 
 
+def already_read_body(target_name=None):
+    """The notice for a re-dropped file nothing needs doing about.
+
+    target_name is the real order's row when the file was dropped somewhere
+    else — the person watching that spare row needs to know where the order
+    lives and that their row is safe to delete.
+    """
+    lines = [
+        "ℹ️ <b>Already read</b> — this exact file has been processed before, "
+        "so nothing was changed. A revised eOrder (a different file) will be "
+        "read as an update."
+    ]
+    if target_name:
+        lines.append(
+            f"This order lives on <b>{target_name}</b> — "
+            "this spare row can be deleted."
+        )
+    lines.append(
+        "(To re-read identical files while testing, set ALLOW_DUPLICATE_FILES.)"
+    )
+    return "<br>".join(lines)
+
+
+def redirect_body(target_name):
+    """Posted on a spare row whose file was read into the order's real row."""
+    name = f"<b>{target_name}</b>" if target_name else "its existing row"
+    return (
+        f"↪️ <b>Matched an existing order</b> — this opportunity already has "
+        f"a row on the board, so the eOrder was read into {name} instead. "
+        "Nothing else will happen on this row; it can be deleted."
+    )
+
+
 def _summarise_lines(parsed):
     """"18 × RE400, 22 × VT202, 4 × AT551" for the monday Update.
 

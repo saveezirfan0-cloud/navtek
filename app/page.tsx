@@ -206,6 +206,7 @@ export default async function Dashboard({
                           <th>Notes</th>
                           <th>When</th>
                           <th>Took</th>
+                          <th>File</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -243,6 +244,23 @@ export default async function Dashboard({
                               <td data-label="When" className="num">{when(r.created_at)}</td>
                               <td data-label="Took" className="num">
                                 {r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : "—"}
+                              </td>
+                              <td data-label="File">
+                                {r.monday_item_id ? (
+                                  // monday asset URLs expire hourly, so the endpoint
+                                  // mints a fresh one per click — never embed one here.
+                                  <a
+                                    className="filelink"
+                                    href={`/api/py/eorder/file?item_id=${r.monday_item_id}`}
+                                    title={r.file_name ?? "Download the eOrder file"}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    ⬇ View
+                                  </a>
+                                ) : (
+                                  "—"
+                                )}
                               </td>
                             </tr>
                           );
