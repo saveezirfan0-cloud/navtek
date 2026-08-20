@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import Body, Cookie, FastAPI, Header, HTTPException, Query, Request  # noqa: E402
 from fastapi.responses import JSONResponse, RedirectResponse  # noqa: E402
 
-from _lib import bootstrap, columns as columns_mod, config, portal, sla, users  # noqa: E402
+from _lib import bootstrap, columns as columns_mod, config, notify, portal, sla, users  # noqa: E402
 from _lib.ingest import handle_webhook  # noqa: E402
 from _lib.monday import Monday, MondayError  # noqa: E402
 from _lib.store import Store  # noqa: E402
@@ -109,6 +109,18 @@ def health(fresh: bool = Query(default=False)):
         "installers_board": config.INSTALLERS_BOARD_ID,
         "write_order_type": config.WRITE_ORDER_TYPE,
         "allow_duplicate_files": config.ALLOW_DUPLICATE_FILES,
+        "sla": {
+            "go_live_date": (config.sla_go_live() or None)
+            and config.sla_go_live().isoformat(),
+            "go_live_raw": config.SLA_GO_LIVE_DATE or None,
+            "business_days": config.SLA_BUSINESS_DAYS,
+            "notifications_enabled": config.SLA_NOTIFICATIONS_ENABLED,
+            "mode": (
+                "off — SLA_GO_LIVE_DATE not set" if not config.sla_go_live()
+                else ("live" if config.SLA_NOTIFICATIONS_ENABLED
+                      else "shadow — logging only")
+            ),
+        },
     }
 
 
@@ -161,6 +173,109 @@ async def parse_endpoint(request: Request):
         return parse(io.BytesIO(blob))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(422, f"{type(exc).__name__}: {exc}") from exc
+
+
+# --------------------------------------------------------------------------
+# Installer-flow webhooks and crons
+# --------------------------------------------------------------------------
+
+def _webhook_guard(request):
+    """Same ?hook= check as /eorder — these endpoints are public and drive
+    monday writes, so with WEBHOOK_SECRET set nothing without it gets in."""
+    if config.WEBHOOK_SECRET:
+        import hmac as _hmac
+
+        if not _hmac.compare_digest(
+            request.query_params.get("hook", ""), config.WEBHOOK_SECRET
+        ):
+            raise HTTPException(401, "bad webhook token")
+
+
+@app.post("/api/py/installer-change")
+async def installer_change(request: Request):
+    """monday webhook on the Installer column — reallocation (prompt 4)."""
+    _webhook_guard(request)
+    payload = await request.json()
+    if "challenge" in payload:
+        return {"challenge": payload["challenge"]}
+    try:
+        result = notify.handle_installer_change(Monday(), Store(), payload)
+    except Exception as exc:  # noqa: BLE001 - 200 always, monday must not retry-storm
+        result = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+    return JSONResponse(result, status_code=200)
+
+
+@app.post("/api/py/portal/refresh")
+async def portal_refresh(request: Request):
+    """monday webhook on the dispatch date / status columns (prompt 5).
+
+    A direct edit in monday refreshes the cached job, and — because a dispatch
+    date arriving is one half of the SMS rule — re-evaluates the allocation
+    trigger. Both halves are idempotent, so duplicate deliveries are free.
+    """
+    _webhook_guard(request)
+    payload = await request.json()
+    if "challenge" in payload:
+        return {"challenge": payload["challenge"]}
+    item_id = (payload.get("event") or {}).get("pulseId")
+    if not item_id:
+        return JSONResponse({"ok": False, "reason": "no pulseId"}, status_code=200)
+    monday, store = Monday(), Store()
+    try:
+        result = portal.refresh_item(monday, store, item_id)
+        result["notify"] = notify.evaluate(monday, store, item_id)
+    except Exception as exc:  # noqa: BLE001 - 200 always
+        result = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+    return JSONResponse(result, status_code=200)
+
+
+def _cron_authorise(x_portal_secret, authorization):
+    """The sweep and resync accept the portal secret (header) or Vercel's
+    cron identity (Authorization: Bearer CRON_SECRET) — a cron cannot send
+    custom headers. Fails CLOSED like _authorise: no secrets configured means
+    these routes are disabled, not open."""
+    import hmac as _hmac
+
+    if config.PORTAL_SHARED_SECRET and _hmac.compare_digest(
+        x_portal_secret or "", config.PORTAL_SHARED_SECRET
+    ):
+        return
+    if config.CRON_SECRET and _hmac.compare_digest(
+        authorization or "", f"Bearer {config.CRON_SECRET}"
+    ):
+        return
+    if not config.PORTAL_SHARED_SECRET and not config.CRON_SECRET:
+        raise HTTPException(
+            503,
+            "Neither PORTAL_SHARED_SECRET nor CRON_SECRET is set, so this "
+            "route is disabled. Add one in the Vercel project settings and "
+            "redeploy.",
+        )
+    raise HTTPException(401, "bad secret")
+
+
+@app.post("/api/py/sla/sweep")
+@app.get("/api/py/sla/sweep")
+def sla_sweep(
+    x_portal_secret: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    """The daily SLA pass. Refuses to run without SLA_GO_LIVE_DATE; sends
+    nothing while SLA_NOTIFICATIONS_ENABLED is false (shadow mode)."""
+    _cron_authorise(x_portal_secret, authorization)
+    return sla.sweep(Monday(), Store())
+
+
+@app.post("/api/py/portal/resync")
+@app.get("/api/py/portal/resync")
+def portal_resync(
+    x_portal_secret: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    """Hourly cache rebuild — belt and braces behind the live-read-first
+    portal (prompt 5)."""
+    _cron_authorise(x_portal_secret, authorization)
+    return portal.resync(Monday(), Store())
 
 
 # --------------------------------------------------------------------------
@@ -710,41 +825,19 @@ def setup_webhook(body: dict = Body(default={}), x_setup_key: str = Header(defau
     url = (body or {}).get("url", "").strip().rstrip("/")
     if not url.startswith("https://"):
         raise HTTPException(400, "Enter this app's address, starting https://")
+    monday = Monday()
     try:
-        return bootstrap.register_webhook(Monday(), f"{url}/api/py/eorder")
+        result = bootstrap.register_webhook(monday, f"{url}/api/py/eorder")
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-
-
-# --------------------------------------------------------------------------
-# SLA sweep (FINALIZE prompt 2) — called daily by a Vercel cron, in shadow
-# mode until SLA_NOTIFICATIONS_ENABLED is explicitly true.
-# --------------------------------------------------------------------------
-
-def _cron_or_portal(request, secret):
-    """Vercel crons authenticate with `Authorization: Bearer $CRON_SECRET`;
-    everything else needs the portal shared secret."""
-    import hmac as _hmac
-
-    auth = request.headers.get("authorization", "")
-    if config.CRON_SECRET and _hmac.compare_digest(
-        auth, f"Bearer {config.CRON_SECRET}"
-    ):
-        return
-    _authorise(secret)
-
-
-@app.get("/api/py/sla/sweep")
-@app.post("/api/py/sla/sweep")
-def sla_sweep(request: Request, x_portal_secret: str = Header(default="")):
-    """Compute SLA breaches across every active installer account.
-
-    Respects the SLA_GO_LIVE_DATE cutoff absolutely, records each breach once
-    ever in the notifications ledger, and — until SLA_NOTIFICATIONS_ENABLED —
-    only logs what it would send.
-    """
-    _cron_or_portal(request, x_portal_secret)
-    return sla.sweep(Monday(), Store())
+    # The installer-flow webhooks (Installer column, dispatch date, status)
+    # ride the same step, idempotently. Missing columns are skipped, not fatal
+    # — the eOrder webhook is the one this step must not leave unregistered.
+    try:
+        result["flow_webhooks"] = bootstrap.register_flow_webhooks(monday, url)
+    except Exception as exc:  # noqa: BLE001
+        result["flow_webhooks"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return result
 
 
 @app.get("/api/py/activity")
@@ -761,7 +854,7 @@ def activity(
     return {
         "events": store.recent_events(150),
         "unknown_order_reasons": store.recent_unknown_reasons(50),
-        "sla_breaches": store.notifications_of_kind("sla_breach", 50),
+        "notifications": store.recent_notifications(50),
     }
 
 

@@ -312,7 +312,7 @@ def _run(monday, store, payload, result, started):
     #
     # EVERY order with Install Required = Yes gets one install subitem per
     # site — a single-site order gets exactly one, built from the main
-    # delivery block — so the portal, the SLA clock and any future SMS all
+    # delivery block — so the portal, the SLA clock and the SMS trigger all
     # start from the same object. Orders with no install (Change of
     # Ownership, Service Only Renewal, customer self-install) get none.
     #
@@ -360,6 +360,16 @@ def _run(monday, store, payload, result, started):
         target_id,
         mapping.update_body(parsed, status, warnings, fields_written, changes),
     )
+
+    # The ingest can complete the SMS rule's second half — a dispatch date
+    # arriving by file while the Installer column is already set (or the
+    # allocation suggestion above setting it while dispatch is known). The
+    # evaluation is idempotent and must never cost the order.
+    try:
+        from . import notify
+        result["notify"] = notify.evaluate(monday, store, target_id)
+    except Exception as exc:  # noqa: BLE001
+        result["notify"] = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
 
     duration_ms = int((time.time() - started) * 1000)
     store.record_ingest(

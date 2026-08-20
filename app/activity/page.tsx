@@ -109,25 +109,26 @@ export default async function ActivityPage() {
             </div>
 
             <div className="panel">
-              <h2>SLA breaches recorded</h2>
+              <h2>Notification ledger</h2>
               <p>
-                Each appears once, ever, per job — this is what the daily sweep
-                found past the {`SLA`} window (and, in shadow mode, what it
-                would have texted).
+                Every claimed send, breach and escalation — one row per
+                (job, kind), ever. In shadow mode this is what the sweep
+                <i> would</i> have acted on.
               </p>
-              {data.sla_breaches.length === 0 ? (
-                <p className="empty">None recorded. That&rsquo;s the good outcome.</p>
+              {data.notifications.length === 0 ? (
+                <p className="empty">Nothing claimed yet. That&rsquo;s the good outcome.</p>
               ) : (
                 <div className="scroll-x">
                   <table>
                     <thead>
-                      <tr><th>When recorded</th><th>Job</th><th>Detail</th></tr>
+                      <tr><th>When</th><th>Job</th><th>Kind</th><th>Detail</th></tr>
                     </thead>
                     <tbody>
-                      {data.sla_breaches.map((b, i) => (
+                      {data.notifications.map((b, i) => (
                         <tr key={i}>
-                          <td className="num">{when(b.created_at)}</td>
+                          <td className="num">{when(b.sent_at)}</td>
                           <td>item {b.monday_item_id}</td>
+                          <td className="mono">{b.kind}</td>
                           <td style={{ color: "var(--mid)" }}>{summary(b.payload)}</td>
                         </tr>
                       ))}

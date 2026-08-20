@@ -389,15 +389,17 @@ def install_sites(parsed):
     """The uniform install-site list for an order (Prompt 1 of the finalisation
     pack): one entry per site that needs an install, whatever the order shape.
 
-    - Multiple Addresses order → its multi_site rows, unchanged.
+    - Multiple Addresses order → its multi_site rows, unchanged (their install
+      items inherit the order's dispatch date from the parent row in the
+      portal's _shape fallback).
     - Single-site order with Install Required = Yes → exactly one entry, built
       from the main delivery block, carrying the same fields a multi-site row
       does (contact, phone, email, address, units, dispatch date).
     - Install Required = No or Customer self-install → none.
 
     Every install item the ingest creates comes from this list, so the portal,
-    the SLA clock and any future SMS trigger see one shape — no single-site
-    special case downstream.
+    the SLA clock and the SMS trigger see one shape — no single-site special
+    case downstream.
     """
     if str(_get(parsed, "install_required") or "").strip().lower() != "yes":
         return []

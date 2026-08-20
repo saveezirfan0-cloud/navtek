@@ -483,6 +483,23 @@ class Store:
             prefer="resolution=merge-duplicates,return=representation",
         )
 
+    def account_has_login(self, account_id):
+        """Does any active installer login point at this account? Drives
+        whether an SMS links to /portal or the magic link."""
+        if not self.enabled or not account_id:
+            return False
+        rows = self._get(
+            "app_users",
+            {
+                "installer_account_id": f"eq.{account_id}",
+                "can_installer": "is.true",
+                "active": "is.true",
+                "select": "id",
+                "limit": "1",
+            },
+        )
+        return bool(rows)
+
     # -- portal ------------------------------------------------------------
 
     def record_event(self, monday_item_id, action, **fields):
@@ -524,6 +541,109 @@ class Store:
             "jobs_cache",
             {"installer_account_id": f"eq.{installer_account_id}", "select": "*"},
         )
+
+    def delete_cached_job(self, monday_item_id):
+        return self._delete(
+            "jobs_cache", {"monday_item_id": f"eq.{monday_item_id}"}
+        )
+
+    def latest_event(self, monday_item_id, action):
+        """The most recent portal event of one kind for an item, or None."""
+        rows = self._get(
+            "portal_events",
+            {
+                "monday_item_id": f"eq.{monday_item_id}",
+                "action": f"eq.{action}",
+                "select": "*",
+                "order": "created_at.desc",
+                "limit": "1",
+            },
+        )
+        return rows[0] if rows else None
+
+    # -- delivery dedup (FINALIZE prompt 7) -----------------------------------
+
+    def claim_delivery(self, key, ttl_minutes=60):
+        """Claim a webhook delivery before processing it. True = ours.
+
+        monday can deliver one event more than once, and two deliveries racing
+        each other can both pass the file-level dedupe before either records.
+        The unique insert here serialises them. Fails OPEN: with the database
+        down (or the table missing) everyone "wins" — an order landing twice
+        is recoverable, an order not landing is not.
+        """
+        if not self.enabled or not key:
+            return True
+        from datetime import datetime, timedelta, timezone
+
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=ttl_minutes)).isoformat()
+        # A genuinely re-fired event should work again eventually.
+        self._delete("webhook_deliveries",
+                     {"delivery_key": f"eq.{key}", "claimed_at": f"lt.{stale}"})
+        self.degraded = None
+        rows = self._post("webhook_deliveries", [{"delivery_key": key}])
+        if rows:
+            return True
+        if self.degraded and self.degraded.startswith("HTTP 409"):
+            return False  # someone else holds the claim — this is the dedup
+        return True  # anything else is the database misbehaving: fail open
+
+    # -- the activity feed (admin audit page) ---------------------------------
+
+    def recent_events(self, limit=100):
+        """What installers did, failed sign-ins, escalations — newest first."""
+        return self._get("portal_events", {
+            "select": "*", "order": "created_at.desc", "limit": str(limit),
+        })
+
+    def recent_unknown_reasons(self, limit=50):
+        return self._get("unknown_order_reasons", {
+            "select": "*", "order": "seen_at.desc", "limit": str(limit),
+        })
+
+    def recent_notifications(self, limit=50):
+        """The notification ledger, newest first — breaches, sends, escalations."""
+        return self._get("notifications", {
+            "select": "*", "order": "sent_at.desc", "limit": str(limit),
+        })
+
+    # -- notifications -------------------------------------------------------
+    #
+    # The dedupe ledger behind every SMS and escalation: (item, kind) is
+    # unique, so a webhook retry storm produces exactly one send. `kind`
+    # carries the audience — "allocated:<account id>" — so a reallocated job
+    # texts the NEW account once without re-texting the old one.
+
+    def claim_notification(self, monday_item_id, kind, payload=None):
+        """True if this (item, kind) was claimed NOW; False if it already was.
+
+        A unique insert, not check-then-write: two concurrent webhook
+        deliveries both pass a read check, only one wins an insert. Database
+        down also returns False — an unsent SMS is recoverable (the daily
+        sweep re-evaluates), a double text to a coordinator is not.
+        """
+        rows = self._post(
+            "notifications",
+            [{
+                "monday_item_id": monday_item_id,
+                "kind": kind,
+                "payload": payload or {},
+            }],
+            prefer="resolution=ignore-duplicates,return=representation",
+        )
+        return bool(rows)
+
+    def was_notified(self, monday_item_id, kind):
+        rows = self._get(
+            "notifications",
+            {
+                "monday_item_id": f"eq.{monday_item_id}",
+                "kind": f"eq.{kind}",
+                "select": "id",
+                "limit": "1",
+            },
+        )
+        return bool(rows)
 
     # -- app users & sessions ----------------------------------------------
     #

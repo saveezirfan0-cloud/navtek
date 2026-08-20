@@ -18,9 +18,11 @@ INSTALLER_COLUMNS = [
     ("coordinator_email", "Coordinator email", "email", None),
     ("portal_token", "Portal token", "text", None),
     ("region", "Region", "dropdown", None),
-    # Which state's public holidays govern this account's SLA clock (§6 / 
-    # FINALIZE prompt 6). Free text on purpose: NSW, VIC, QLD…
-    ("state", "State", "text", None),
+    # Which state's public holidays this account's SLA clock skips (§6 /
+    # prompt 6). Defaults to NSW downstream when blank.
+    ("state", "State", "status",
+     {"labels": {"1": "NSW", "2": "VIC", "3": "QLD", "4": "SA",
+                 "5": "WA", "6": "TAS", "7": "ACT", "8": "NT"}}),
     ("active", "Active", "checkbox", None),
 ]
 
@@ -264,7 +266,7 @@ def sync_installers(monday, store, installers_board_id=None):
             "coordinator_email": column(values, "Coordinator email"),
             "portal_token": token,
             "region": column(values, "Region"),
-            "state": (column(values, "State") or "NSW").strip().upper(),
+            "state": (column(values, "State") or "NSW").strip().upper() or "NSW",
             "active": active_raw in ("v", "true", "checked", "yes", "1"),
             "match_key": installers.match_key(item["name"]),
         })
@@ -297,8 +299,16 @@ def register_webhook(monday, url, board_id=None, file_column_id=None):
         raise ValueError(
             "No file column called 'eOrder' on the board. Run step 2 first."
         )
+    return _register_column_webhook(monday, board_id, column_id, url)
 
-    # Registering twice would process every dropped file twice.
+
+def _register_column_webhook(monday, board_id, column_id, url):
+    """change_specific_column_value on one column, exactly once.
+
+    Registering twice would process every change twice — for the eOrder column
+    that means every dropped file ingested twice, for the Installer column
+    every reallocation handled twice.
+    """
     for hook in monday.webhooks(board_id):
         if hook.get("config") and column_id in str(hook["config"]):
             return {
@@ -312,3 +322,36 @@ def register_webhook(monday, url, board_id=None, file_column_id=None):
         board_id, url, "change_specific_column_value", {"columnId": column_id}
     )
     return {"webhook_id": hook["id"], "url": url, "column_id": column_id}
+
+
+def register_flow_webhooks(monday, base_url, board_id=None):
+    """Every webhook the installer flow needs, idempotently, in one call.
+
+    Alongside the eOrder file webhook: the Installer column (reallocation —
+    prompt 4), the dispatch date column, and the board's status column (portal
+    cache freshness — prompt 5). Columns that don't exist yet are reported and
+    skipped, not fatal — this is safe to re-run after board setup finishes.
+    """
+    board_id = board_id or config.ORDERS_BOARD_ID
+    base = base_url.rstrip("/")
+    cols = resolved(monday, board_id, force=True)
+
+    # Same ?hook= hardening as register_webhook — every one of these endpoints
+    # is reachable from the open internet and drives monday writes.
+    suffix = f"?hook={config.WEBHOOK_SECRET}" if config.WEBHOOK_SECRET else ""
+    wanted = [
+        ("eorder_file", f"{base}/api/py/eorder{suffix}"),
+        ("installer", f"{base}/api/py/installer-change{suffix}"),
+        ("order_date", f"{base}/api/py/portal/refresh{suffix}"),
+        ("order_status", f"{base}/api/py/portal/refresh{suffix}"),
+    ]
+
+    registered, skipped = [], []
+    for key, url in wanted:
+        column_id = cols.get(key)
+        if not column_id:
+            skipped.append(key)
+            continue
+        result = _register_column_webhook(monday, board_id, column_id, url)
+        registered.append({"column": key, **result})
+    return {"registered": registered, "skipped_missing_columns": skipped}

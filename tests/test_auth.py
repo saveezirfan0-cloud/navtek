@@ -335,9 +335,10 @@ def test_the_sweep_needs_the_portal_secret_or_the_cron_secret(monkeypatch):
     cron = TestClient(_module.app, raise_server_exceptions=False,
                       headers={"Authorization": "Bearer cron-secret"})
     response = cron.get("/api/py/sla/sweep")
-    # No SLA_GO_LIVE_DATE in tests → the sweep answers, and says it's off.
+    # No SLA_GO_LIVE_DATE in tests → the sweep answers, and refuses to run.
     assert response.status_code == 200
-    assert response.json()["enabled"] is False
+    assert response.json()["swept"] is False
+    assert "SLA_GO_LIVE_DATE" in response.json()["reason"]
 
 
 def test_the_activity_feed_is_admin_only():

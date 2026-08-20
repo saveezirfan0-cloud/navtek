@@ -3,6 +3,7 @@ import AutoRefresh from "@/app/AutoRefresh";
 import { getMyJobs, getPreviewJobs } from "@/lib/api";
 import { requireViewer, sessionToken } from "@/lib/auth";
 import JobCard from "@/app/jobs/JobCard";
+import Staleness from "@/app/jobs/Staleness";
 import { signOut } from "@/app/login/actions";
 import { stopPreviewAction } from "@/app/users/actions";
 
@@ -105,6 +106,8 @@ export default async function MyJobs() {
           )}
         </div>
       </header>
+
+      <Staleness refreshedAt={data.refreshed_at} stale={data.stale} />
 
       {action_needed.length > 0 && <div className="sect">Action needed</div>}
       {action_needed.map((job) => (

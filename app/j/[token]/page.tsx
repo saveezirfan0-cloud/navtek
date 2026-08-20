@@ -1,6 +1,7 @@
 import { getJobs } from "@/lib/api";
 import AutoRefresh from "@/app/AutoRefresh";
 import JobCard from "@/app/jobs/JobCard";
+import Staleness from "@/app/jobs/Staleness";
 
 export const metadata = { title: "Your jobs · Navtek installs" };
 
@@ -71,6 +72,8 @@ export default async function Portal({
           )}
         </div>
       </header>
+
+      <Staleness refreshedAt={data.refreshed_at} stale={data.stale} />
 
       {action_needed.length > 0 && <div className="sect">Action needed</div>}
       {action_needed.map((job) => (

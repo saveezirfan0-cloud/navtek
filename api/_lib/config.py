@@ -88,11 +88,28 @@ SUPABASE_SERVICE_KEY = _first[0]["key"] if _first else ""
 # only client allowed to call /portal/*; it holds this, the browser never does.
 PORTAL_SHARED_SECRET = os.environ.get("PORTAL_SHARED_SECRET", "")
 
+# Vercel sends this as "Authorization: Bearer <CRON_SECRET>" on cron requests.
+# The sweep and resync endpoints accept it as an alternative to the portal
+# secret, because a cron cannot send custom headers.
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
+
 # Optional webhook hardening. When set, the registered webhook URL carries it
 # as ?hook=… and /eorder rejects deliveries without it — otherwise anyone who
 # can reach the public URL can hand the automation a payload. Set it, then
 # re-run setup step 4 so the registration picks it up.
 WEBHOOK_SECRET = _clean_secret(os.environ.get("WEBHOOK_SECRET", ""))
+
+
+# Where the app is reachable from an installer's phone — used to build the
+# portal link in SMS bodies. Falls back to Vercel's own idea of the deployment.
+def portal_base_url():
+    for name in ("APP_URL", "PORTAL_BASE_URL"):
+        value = (os.environ.get(name) or "").strip().rstrip("/")
+        if value:
+            return value
+    host = (os.environ.get("VERCEL_PROJECT_PRODUCTION_URL")
+            or os.environ.get("VERCEL_URL") or "").strip().rstrip("/")
+    return f"https://{host}" if host else ""
 
 # --------------------------------------------------------------------------
 # Boards
@@ -109,6 +126,11 @@ INSTALLERS_BOARD_ID = int(os.environ.get("INSTALLERS_BOARD_ID", "0")) or None
 _DEFAULT_COLUMNS = {
     # --- existing, confirmed ---
     "opportunity_id": "order__",
+    # The orders board's own status column — the one Navtek staff work from.
+    # Lookup-only (LEGACY_COLUMNS): the SLA escalation writes its existing
+    # "6.1 Installer Esc." label here, and if the board has no such column the
+    # escalation is skipped and reported rather than guessed at.
+    "order_status": None,
     "order_type": "order_type9",
     "platform": "platform1",
     "migration_required": "migration_required",
@@ -223,21 +245,6 @@ COLUMNS = _load_columns()
 # because a blank prompts someone to fill it in and a wrong one does not.
 WRITE_ORDER_TYPE = os.environ.get("WRITE_ORDER_TYPE", "false").lower() == "true"
 
-# --- SLA engine (FINALIZE prompt 2) ---
-#
-# Only jobs dispatched on or after the go-live date enter the SLA engine —
-# everything older is backlog reconciled by hand. Unset means the sweep is off.
-SLA_GO_LIVE_DATE = _clean_secret(os.environ.get("SLA_GO_LIVE_DATE", ""))
-SLA_BUSINESS_DAYS = int(os.environ.get("SLA_BUSINESS_DAYS", "2"))
-# The sweep runs in shadow mode (record + log, send nothing) until this is
-# explicitly true. Read a week of shadow output before flipping it.
-SLA_NOTIFICATIONS_ENABLED = (
-    os.environ.get("SLA_NOTIFICATIONS_ENABLED", "false").lower() == "true"
-)
-# Vercel cron authentication: when set, Vercel sends it as a Bearer token and
-# the sweep endpoint accepts it in place of the portal secret.
-CRON_SECRET = _clean_secret(os.environ.get("CRON_SECRET", ""))
-
 # Testing escape hatch: re-read a file the ledger has already seen instead of
 # skipping it. The duplicate skip (acceptance criterion 2) is right for
 # production — the same file re-dropped must not fork or re-notify — but while
@@ -255,6 +262,44 @@ INSTALLER_MATCH_THRESHOLD = float(os.environ.get("INSTALLER_MATCH_THRESHOLD", "0
 # monday asset public_urls expire after one hour. Fetch immediately, never
 # store, never cache the URL itself (brief §3.2, §6.3).
 ASSET_FETCH_TIMEOUT = int(os.environ.get("ASSET_FETCH_TIMEOUT", "30"))
+
+# --------------------------------------------------------------------------
+# SLA engine
+# --------------------------------------------------------------------------
+
+# The hard go-live cutoff. Only jobs whose dispatch date is ON OR AFTER this
+# date ever enter the SLA engine — everything older is historical backlog that
+# Navtek reconciles with installers by hand. The board carries jobs up to 212
+# business days overdue; a sweep without this cutoff texts every installer
+# about months-old jobs in its first hour and kills trust in the whole system.
+# Unset means the SLA engine (sweep, SMS, escalation) is OFF, not "no cutoff".
+SLA_GO_LIVE_DATE = os.environ.get("SLA_GO_LIVE_DATE", "").strip()
+
+# Contact SLA in business days (public holidays per the installer's state).
+SLA_BUSINESS_DAYS = int(os.environ.get("SLA_BUSINESS_DAYS", "2"))
+
+# Master switch for actually sending anything (SMS, escalation status writes).
+# Default false: the sweep runs in shadow mode first, logging what it WOULD
+# send, until a week of real orders has been read from that log.
+SLA_NOTIFICATIONS_ENABLED = (
+    os.environ.get("SLA_NOTIFICATIONS_ENABLED", "false").lower() == "true"
+)
+
+
+def sla_go_live():
+    """The cutoff as a date, or None when unset/unparseable.
+
+    Parsed at call time, not import time, so /health can report a typo and a
+    fixed value takes effect without hunting down module state.
+    """
+    from datetime import date as _date
+    raw = (os.environ.get("SLA_GO_LIVE_DATE") or SLA_GO_LIVE_DATE or "").strip()
+    if not raw:
+        return None
+    try:
+        return _date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
 
 
 def missing_secrets():

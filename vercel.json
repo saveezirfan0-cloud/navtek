@@ -10,5 +10,9 @@
       "maxDuration": 60,
       "includeFiles": "api/_lib/**"
     }
-  }
+  },
+  "crons": [
+    { "path": "/api/py/sla/sweep", "schedule": "0 21 * * *" },
+    { "path": "/api/py/portal/resync", "schedule": "30 * * * *" }
+  ]
 }

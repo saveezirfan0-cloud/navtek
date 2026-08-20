@@ -1,5 +1,15 @@
 # Finalisation prompts
 
+> **Status (Aug 2026): prompts 1–6 — the installer workflow — are built.**
+> Install items per site, the SLA engine + sweep, the SMS trigger,
+> reallocation, the portal cache webhooks/resync/staleness marker, and
+> AU business days + 6.1 escalation all exist behind `SLA_GO_LIVE_DATE`
+> (unset = off) and `SLA_NOTIFICATIONS_ENABLED` (false = shadow mode).
+> Damon's three questions below still need answers before those switches are
+> flipped — the go-live date especially. Prompts 7–9 (delivery dedup,
+> multi-site quantity check, the missing samples) and the prompt 10 review
+> remain open.
+
 Copy-paste prompts to finish the build, one work item per prompt. Run them in
 this order against this repository — each is self-contained, and each ends
 with the same gate: `python -m pytest tests/ -q` green and

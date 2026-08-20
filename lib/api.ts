@@ -87,6 +87,13 @@ export type JobsResponse = {
   action_needed: Job[];
   waiting: Job[];
   overdue: number;
+  sla_days?: number;
+  /** When this list was last read from monday (ISO). Null when even the
+   * cache is empty. */
+  refreshed_at?: string | null;
+  /** True when the list came from a cache more than an hour old — the page
+   * shows "Updated 3h ago" so nobody drives to a reallocated site. */
+  stale?: boolean;
 };
 
 /** `gone` is only true when the service itself said the link is unknown — a
@@ -294,16 +301,17 @@ export type UnknownReason = {
   seen_at: string;
 };
 
-export type SlaBreach = {
+export type LedgerEntry = {
   monday_item_id: number;
+  kind: string;
   payload: Record<string, unknown>;
-  created_at: string;
+  sent_at: string;
 };
 
 export async function getActivity(session: string): Promise<{
   events: ActivityEvent[];
   unknown_order_reasons: UnknownReason[];
-  sla_breaches: SlaBreach[];
+  notifications: LedgerEntry[];
 } | null> {
   try {
     return await call("/activity", { headers: { "X-Session": session } });
