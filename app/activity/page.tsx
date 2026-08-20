@@ -20,6 +20,12 @@ const ACTION_LABEL: Record<string, string> = {
   blocked: "⚠ Can't proceed",
   login_failed: "🚫 Failed sign-in",
   sla_breach: "⏰ SLA breach recorded",
+  webhook_processed: "🪝 Webhook — file processed",
+  webhook_skipped: "🪝 Webhook — delivery skipped",
+  webhook_failed: "🪝 Webhook — delivery failed",
+  file_read: "📄 eOrder read cleanly",
+  file_check: "📄 eOrder read — needs a look",
+  file_failed: "📄 eOrder failed to parse",
 };
 
 function when(iso: string) {
@@ -61,10 +67,11 @@ export default async function ActivityPage() {
         <div className="head">
           <h1>Activity</h1>
           <p>
-            What installers did and when, straight from the audit trail — the
+            Everything as it happens, newest first — webhooks monday fired,
+            eOrder files uploaded and read, what installers did and when,
+            failed sign-ins, and anything the parser flagged for a human. The
             thing to check when someone says &ldquo;I called them weeks
-            ago&rdquo; and the SLA report disagrees. Plus failed sign-ins and
-            anything the parser flagged for a human.
+            ago&rdquo; and the SLA report disagrees.
           </p>
         </div>
 
