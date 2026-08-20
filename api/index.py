@@ -965,13 +965,6 @@ def recent(limit: int = Query(default=20), x_portal_secret: str = Header(default
     if store.degraded:
         return {"enabled": False, "ingests": [], "database": store.ping()}
 
-    # The webhook log includes what the ingest ledger never sees — duplicate
-    # skips and no-file deliveries, which monday's own log shows as Success.
-    # An absent table (0004 not run yet) degrades to an empty list plus a flag
-    # the dashboard turns into a "run the migration" hint.
-    hooks = store.recent_webhooks(min(limit, 50))
-    webhook_log_ready = not (store.degraded and "webhook_log" in str(store.degraded))
-
     return {
         "enabled": True,
         "ingests": [
@@ -989,7 +982,49 @@ def recent(limit: int = Query(default=20), x_portal_secret: str = Header(default
             }
             for r in rows
         ],
+    }
+
+
+@app.get("/api/py/webhooks")
+def webhook_deliveries(
+    limit: int = Query(default=25),
+    offset: int = Query(default=0),
+    x_portal_secret: str = Header(default=""),
+):
+    """The webhook delivery log, paginated — every call monday made, including
+    the ones that changed nothing. This is what the ingest ledger never sees:
+    duplicate skips and no-file deliveries, which monday's own automation log
+    shows as Success. Same audience as /recent, so the same guard.
+
+    An absent table (migration 0004 not run yet) degrades to an empty page
+    plus webhook_log_ready=false, which the page turns into a "run the
+    migration" hint rather than an empty-log lie.
+    """
+    _authorise(x_portal_secret)
+    store = Store()
+    if not store.enabled:
+        return {"enabled": False, "webhooks": [], "total": 0,
+                "database": store.ping()}
+
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    hooks, total = store.webhook_page(limit, offset)
+
+    # Only a 404 means "table not there yet". Anything else — bad key,
+    # network — is the database misbehaving, and saying "run the migration"
+    # would send someone to fix the wrong thing.
+    degraded = str(store.degraded or "")
+    if degraded and not degraded.startswith("HTTP 404"):
+        return {"enabled": False, "webhooks": [], "total": 0,
+                "database": store.ping()}
+    webhook_log_ready = not degraded
+
+    return {
+        "enabled": True,
         "webhook_log_ready": webhook_log_ready,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
         "webhooks": [
             {
                 "monday_item_id": h.get("monday_item_id"),

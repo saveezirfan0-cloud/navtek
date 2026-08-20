@@ -172,8 +172,6 @@ export type WebhookRun = {
 export async function getRecent(): Promise<{
   enabled: boolean;
   ingests: Ingest[];
-  webhooks?: WebhookRun[];
-  webhook_log_ready?: boolean;
   database?: DbState;
 }> {
   try {
@@ -184,6 +182,35 @@ export async function getRecent(): Promise<{
     return {
       enabled: false,
       ingests: [],
+      database: {
+        ok: false,
+        state: "unreachable",
+        detail: error instanceof Error ? error.message : "unknown error",
+      },
+    };
+  }
+}
+
+export type WebhookLog = {
+  enabled: boolean;
+  webhook_log_ready?: boolean;
+  total: number;
+  webhooks: WebhookRun[];
+  database?: DbState;
+};
+
+/** One page of the webhook delivery log, newest first. `total` counts the
+ * whole log, not the page — the Deliveries tab derives its pager from it. */
+export async function getWebhookLog(
+  limit: number,
+  offset: number,
+): Promise<WebhookLog> {
+  try {
+    return await call(`/webhooks?limit=${limit}&offset=${offset}`);
+  } catch (error) {
+    return {
+      enabled: false,
+      total: 0,
       webhooks: [],
       database: {
         ok: false,

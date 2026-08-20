@@ -1,3 +1,4 @@
+import Link from "next/link";
 import AutoRefresh from "./AutoRefresh";
 import Nav from "./Nav";
 import NoAccess from "./NoAccess";
@@ -8,21 +9,6 @@ import { requireViewer } from "@/lib/auth";
 export const metadata = { title: "Orders · Navtek" };
 
 export const dynamic = "force-dynamic";
-
-const HOOK_PILL: Record<string, [string, string]> = {
-  processed: ["p-read", "Processed"],
-  skipped: ["p-check", "Skipped"],
-  failed: ["p-failed", "Failed"],
-};
-
-function when(iso: string) {
-  const d = new Date(iso);
-  const thisYear = d.getFullYear() === new Date().getFullYear();
-  return d.toLocaleString("en-AU", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-    ...(thisYear ? {} : { year: "numeric" }),
-  });
-}
 
 export default async function Dashboard() {
   // All three in flight together — the gate is checked when they land, and
@@ -53,8 +39,6 @@ export default async function Dashboard() {
   const warnings = health?.config_warnings ?? [];
   const notReady =
     !health || health.missing_secrets.length > 0 || health.unmapped_columns.length > 0;
-
-  const hooks = recent.webhooks ?? [];
 
   return (
     <>
@@ -147,68 +131,15 @@ export default async function Dashboard() {
               TN Orders and it will appear here.
             </p>
           ) : (
-<RecentTable rows={rows} />
-          )}
-        </div>
-
-        <div className="panel">
-          <h2>Webhook deliveries</h2>
-          <p className="empty" style={{ marginTop: 0 }}>
-            Every call monday made to this app, including the ones that changed
-            nothing. monday&rsquo;s own automation log shows all of these as
-            Success — a <b>Skipped</b> row here is why a drop can succeed in
-            monday and still change nothing (usually the identical file was
-            already read).
-          </p>
-          {recent.enabled && recent.webhook_log_ready === false ? (
-            <p className="empty">
-              <b>Not recording yet.</b> Run{" "}
-              <code>supabase/migrations/0004_webhook_log.sql</code> in the
-              Supabase SQL Editor to switch this log on.
-            </p>
-          ) : hooks.length === 0 ? (
-            <p className="empty">No deliveries recorded yet.</p>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Order</th>
-                  <th>Outcome</th>
-                  <th>Detail</th>
-                  <th>When</th>
-                  <th>Took</th>
-                </tr>
-              </thead>
-              <tbody>
-                {hooks.map((h, i) => {
-                  const [cls, label] = HOOK_PILL[h.outcome] ?? ["p-check", h.outcome];
-                  return (
-                    <tr key={i}>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>
-                          {h.file_name ?? (h.monday_item_id ? `item ${h.monday_item_id}` : "—")}
-                        </div>
-                        {h.opportunity_id && (
-                          <div className="mono" style={{ color: "var(--mid)" }}>
-                            {h.opportunity_id}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <span className={`pill ${cls}`}>{label}</span>
-                      </td>
-                      <td style={{ color: "var(--mid)" }}>
-                        {h.reason ?? h.status ?? ""}
-                      </td>
-                      <td className="num">{when(h.created_at)}</td>
-                      <td className="num">
-                        {h.duration_ms ? `${(h.duration_ms / 1000).toFixed(1)}s` : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <>
+              <RecentTable rows={rows} />
+              <p className="tiny" style={{ marginTop: 10 }}>
+                A drop that changed nothing (a duplicate file, a no-file
+                delivery) never lands here — see{" "}
+                <Link href="/deliveries">Deliveries</Link> for every call
+                monday made.
+              </p>
+            </>
           )}
         </div>
 

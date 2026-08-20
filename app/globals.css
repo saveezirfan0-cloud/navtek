@@ -353,3 +353,17 @@ pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
   cursor: pointer; color: inherit;
 }
 .chip-btn.on { background: #102030; border-color: #102030; color: #fff; }
+
+/* -- pagination (the Deliveries tab) --------------------------------------- */
+.pager {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-top: 14px;
+}
+.page-btn {
+  display: inline-block; border: 1.5px solid #c3d2df; border-radius: 10px;
+  background: #fff; color: var(--navy-2); font-size: 14px; font-weight: 650;
+  padding: 8px 14px; text-decoration: none; white-space: nowrap;
+}
+a.page-btn:hover { background: #eef4fa; }
+.page-btn.off { opacity: .45; }
+.page-where { font-size: 13.5px; color: var(--mid); }

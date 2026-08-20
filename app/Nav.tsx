@@ -24,7 +24,7 @@ export default function Nav({
   const previewing = Boolean(realUser && realUser.id !== user.id);
   const links: [string, string][] = [];
   if (user.can_orders || user.is_admin) {
-    links.push(["/", "Orders"], ["/try", "File tester"]);
+    links.push(["/", "Orders"], ["/deliveries", "Deliveries"], ["/try", "File tester"]);
   }
   // The Installer ACCESS switch decides this — a linked account alone is not
   // access. (An admin sees it too once linked, since the page lets them in.)

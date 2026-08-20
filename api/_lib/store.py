@@ -430,10 +430,33 @@ class Store:
         except httpx.HTTPError:
             return []
 
-    def recent_webhooks(self, limit=30):
-        return self._get("webhook_log", {
-            "select": "*", "order": "created_at.desc", "limit": str(limit),
-        })
+    def webhook_page(self, limit=25, offset=0):
+        """One page of the delivery log, newest first, plus the total count.
+
+        The total comes back in PostgREST's Content-Range header when asked
+        for with `Prefer: count=exact` — one round trip, not a second query.
+        Same never-raise contract as _get: a failure is ([], 0) and degraded.
+        """
+        if not self.enabled:
+            return [], 0
+        try:
+            response = self._send(lambda: self._client.get(
+                f"{self.url}/rest/v1/webhook_log",
+                params={"select": "*", "order": "created_at.desc",
+                        "limit": str(limit), "offset": str(offset)},
+                headers=self._headers("count=exact"),
+            ))
+            if response.status_code >= 400:
+                self.degraded = f"HTTP {response.status_code} reading webhook_log"
+                return [], 0
+            # Content-Range looks like "0-24/137"; the part after the slash
+            # is the exact total, or "*" if Supabase declined to count.
+            total_text = response.headers.get("content-range", "").rpartition("/")[2]
+            total = int(total_text) if total_text.isdigit() else 0
+            return response.json(), total
+        except Exception as exc:  # noqa: BLE001
+            self.degraded = f"{type(exc).__name__} reading webhook_log"
+            return [], 0
 
     def record_unknown_order_reason(self, order_reason, opportunity_id, file_name):
         """Brief §4.1 — an unrecognised order reason silently produces no ACV."""

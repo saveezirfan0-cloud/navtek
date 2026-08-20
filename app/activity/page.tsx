@@ -1,6 +1,7 @@
 import Nav from "../Nav";
 import NoAccess from "../NoAccess";
 import { getActivity } from "@/lib/api";
+import { when } from "@/lib/format";
 import { requireViewer, sessionToken } from "@/lib/auth";
 
 export const metadata = { title: "Activity · Navtek" };
@@ -21,15 +22,6 @@ const ACTION_LABEL: Record<string, string> = {
   login_failed: "🚫 Failed sign-in",
   sla_breach: "⏰ SLA breach recorded",
 };
-
-function when(iso: string) {
-  const d = new Date(iso);
-  const thisYear = d.getFullYear() === new Date().getFullYear();
-  return d.toLocaleString("en-AU", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-    ...(thisYear ? {} : { year: "numeric" }),
-  });
-}
 
 function summary(payload: Record<string, unknown>): string {
   if (!payload || typeof payload !== "object") return "";

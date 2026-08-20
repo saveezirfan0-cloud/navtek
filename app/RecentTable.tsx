@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { Ingest } from "@/lib/api";
+import { when } from "@/lib/format";
 
 /** The recent-reads table, with the three things an operator reaches for:
  * find an order by name/ID, narrow to the ones needing attention, and get
@@ -12,15 +13,6 @@ const PILL: Record<string, [string, string]> = {
   check: ["p-check", "Check"],
   failed: ["p-failed", "Failed"],
 };
-
-function when(iso: string) {
-  const d = new Date(iso);
-  const thisYear = d.getFullYear() === new Date().getFullYear();
-  return d.toLocaleString("en-AU", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-    ...(thisYear ? {} : { year: "numeric" }),
-  });
-}
 
 function csvField(value: unknown): string {
   const text = String(value ?? "");
