@@ -68,6 +68,7 @@ class FakeMonday:
         self.written = {}
         self.updates = []
         self.updates_to = []        # (item_id, body) — who each update went to
+        self.written_to = []        # (item_id, values) — who each write went to
         self.matches = []           # rows find_by_column_value returns
         self.renamed = None
         self.subitems_created = []
@@ -128,9 +129,11 @@ class FakeMonday:
     def find_by_column_value(self, *a):
         return list(self.matches)
 
-    def set_columns(self, board_id, item_id, values):
-        self._enforce_labels(values)
+    def set_columns(self, board_id, item_id, values, create_labels_if_missing=False):
+        if not create_labels_if_missing:
+            self._enforce_labels(values)
         self.written.update(values)
+        self.written_to.append((str(item_id), values))
         return {}
 
     def _enforce_labels(self, values):
@@ -300,6 +303,8 @@ def test_a_file_dropped_on_a_spare_row_points_back_at_the_real_order():
     assert pointers, monday.updates_to
     assert "Matched an existing order" in pointers[0]
     assert "KANE CIVIL" in pointers[0] and "deleted" in pointers[0]
+    # …and stamped Duplicate at board level, so it can't pass for a live order.
+    assert ("123", {"color_status": {"label": "Duplicate"}}) in monday.written_to
 
 
 def test_a_duplicate_on_a_spare_row_names_the_real_row():
@@ -312,10 +317,11 @@ def test_a_duplicate_on_a_spare_row_names_the_real_row():
 
     second, _, _ = run(KANE, monday=monday, store=store)
     assert second["skipped"] == "identical file already read"
-    assert monday.written == {}
     to, body = monday.updates_to[0]
     assert to == "123" and "Already read" in body
     assert "KANE CIVIL" in body and "spare row can be deleted" in body
+    # The spare row is stamped Duplicate — and that is its ONLY write.
+    assert monday.written_to == [("123", {"color_status": {"label": "Duplicate"}})]
 
 
 # -- every webhook delivery leaves a trace, including the invisible ones ------
@@ -844,6 +850,49 @@ def test_setup_prepares_the_subitem_field_set():
     before = len(monday.sub_columns)
     bootstrap.prepare_subitem_columns(monday, BOARD_ID)
     assert len(monday.sub_columns) == before
+
+
+def test_setup_survives_a_column_type_monday_refuses(monkeypatch):
+    """"This column type is not supported yet in the API" on ONE column
+    (board_relation, on some accounts) used to abort the whole step with a
+    502 and nothing created. Refusals are now logged and skipped."""
+    from _lib import bootstrap
+    monkeypatch.setattr(config, "INSTALLERS_BOARD_ID", 555)
+
+    class RefusesRelations(FakeMonday):
+        def create_column(self, board_id, title, ctype, settings=None,
+                          description=None):
+            if ctype == "board_relation":
+                raise MondayError("This column type is not supported yet in the API")
+            return super().create_column(board_id, title, ctype, settings,
+                                         description)
+
+    monday = RefusesRelations(blob(KANE))
+    ingest._SUB_COLS_CACHE.clear()
+    result = bootstrap.prepare_subitem_columns(monday, BOARD_ID)
+    assert result["prepared"] is True
+    titles = [c["title"] for c in monday.sub_columns]
+    assert "Site Address" in titles      # the rest of the field set landed
+    assert "Installer" not in titles
+
+
+def test_create_columns_continues_past_a_refused_type():
+    from _lib import bootstrap
+
+    class RefusesFiles:
+        def board_columns(self, board_id):
+            return []
+
+        def create_column(self, board_id, title, ctype, settings=None,
+                          description=None):
+            if ctype == "file":
+                raise MondayError("This column type is not supported yet in the API")
+            return {"id": f"c_{title.lower().replace(' ', '_')}"}
+
+    result = bootstrap.create_columns(RefusesFiles(), BOARD_ID)
+    assert "eOrder" in result["failed"] and "Vehicle List" in result["failed"]
+    assert result["column_ids"]["eorder_status"]   # everything else landed
+    assert any(line.startswith("failed   eOrder") for line in result["log"])
 
 
 def test_setup_skips_subitem_columns_until_the_board_exists():
