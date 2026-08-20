@@ -124,6 +124,10 @@ def test_my_jobs_requires_a_session():
     assert client().get("/api/py/portal/my-jobs").status_code == 401
 
 
+def test_changing_a_password_requires_a_session():
+    assert client().post("/api/py/auth/change-password", json={}).status_code == 401
+
+
 def test_settings_require_a_session():
     """Workspace settings decide who gets emailed about failures — reading
     them leaks addresses, writing them redirects the alarm. Admin only."""
@@ -210,6 +214,11 @@ class FakeUserStore:
     def delete_user_sessions(self, user_id):
         self.sessions = {k: v for k, v in self.sessions.items()
                          if v["user_id"] != user_id}
+        return True
+
+    def delete_other_user_sessions(self, user_id, keep_token_sha256):
+        self.sessions = {k: v for k, v in self.sessions.items()
+                         if v["user_id"] != user_id or k == keep_token_sha256}
         return True
 
     def recent_failed_logins(self, email, minutes=15):
@@ -331,6 +340,86 @@ def test_an_admin_cannot_lock_themselves_out(monkeypatch):
             headers={"X-Session": data["token"]},
         )
         assert response.status_code == 400
+
+
+# -- changing your own password ----------------------------------------------
+
+def test_changing_your_password_needs_the_current_one(monkeypatch):
+    wired(monkeypatch)
+    c = client()
+    token = bootstrap_admin(c)["token"]
+    response = c.post(
+        "/api/py/auth/change-password",
+        json={"current_password": "not it at all", "new_password": "a fresh long one"},
+        headers={"X-Session": token},
+    )
+    assert response.status_code == 400
+    assert "current password" in response.json()["detail"].lower()
+    # And the old password still works — nothing changed.
+    assert c.post("/api/py/auth/login",
+                  json={"email": "admin@navtek.au", "password": "long enough now"},
+                  ).status_code == 200
+
+
+def test_changing_your_password_rotates_it_and_keeps_you_signed_in(monkeypatch):
+    wired(monkeypatch)
+    c = client()
+    token = bootstrap_admin(c)["token"]
+    # A second session — the same person signed in on another device.
+    other = c.post("/api/py/auth/login",
+                   json={"email": "admin@navtek.au", "password": "long enough now"},
+                   ).json()["token"]
+    response = c.post(
+        "/api/py/auth/change-password",
+        json={"current_password": "long enough now", "new_password": "a fresh long one"},
+        headers={"X-Session": token},
+    )
+    assert response.status_code == 200, response.text
+    # Old password out, new password in.
+    assert c.post("/api/py/auth/login",
+                  json={"email": "admin@navtek.au", "password": "long enough now"},
+                  ).status_code == 401
+    assert c.post("/api/py/auth/login",
+                  json={"email": "admin@navtek.au", "password": "a fresh long one"},
+                  ).status_code == 200
+    # The session that made the change survives; the other device is out.
+    assert c.get("/api/py/auth/me", headers={"X-Session": token}).status_code == 200
+    assert c.get("/api/py/auth/me", headers={"X-Session": other}).status_code == 401
+
+
+def test_a_too_short_new_password_is_refused(monkeypatch):
+    wired(monkeypatch)
+    c = client()
+    token = bootstrap_admin(c)["token"]
+    response = c.post(
+        "/api/py/auth/change-password",
+        json={"current_password": "long enough now", "new_password": "short"},
+        headers={"X-Session": token},
+    )
+    assert response.status_code == 400
+    assert "10 characters" in response.json()["detail"]
+
+
+def test_wrong_current_passwords_share_the_login_throttle(monkeypatch):
+    """Guessing at the change-password form must be no cheaper than guessing
+    at the login form — the same eight-in-fifteen-minutes counter parks both."""
+    wired(monkeypatch)
+    c = client()
+    token = bootstrap_admin(c)["token"]
+    for _ in range(8):
+        assert c.post(
+            "/api/py/auth/change-password",
+            json={"current_password": "nope nope!", "new_password": "a fresh long one"},
+            headers={"X-Session": token},
+        ).status_code == 400
+    assert c.post(
+        "/api/py/auth/change-password",
+        json={"current_password": "long enough now", "new_password": "a fresh long one"},
+        headers={"X-Session": token},
+    ).status_code == 429
+    assert c.post("/api/py/auth/login",
+                  json={"email": "admin@navtek.au", "password": "long enough now"},
+                  ).status_code == 429
 
 
 # -- the SLA sweep endpoint ---------------------------------------------------

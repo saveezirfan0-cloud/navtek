@@ -1,6 +1,7 @@
 import Nav from "../Nav";
 import ThemeSwitcher from "../theme";
 import NotificationsForm from "./NotificationsForm";
+import PasswordForm from "./PasswordForm";
 import { getSettings } from "@/lib/api";
 import { requireViewer, sessionToken } from "@/lib/auth";
 
@@ -35,6 +36,23 @@ export default async function Settings() {
             only changes what you see.
           </p>
           <ThemeSwitcher />
+        </div>
+
+        <div className="panel">
+          <h2>Password</h2>
+          <p>
+            The password you sign in with. Changing it signs out every other
+            device straight away.
+          </p>
+          {previewing ? (
+            <p className="empty">
+              Hidden while previewing another login — the session is still
+              yours, so this form would change <b>your</b> password, not
+              theirs. Exit the preview first.
+            </p>
+          ) : (
+            <PasswordForm />
+          )}
         </div>
 
         <div className="panel">

@@ -922,3 +922,11 @@ class Store:
 
     def delete_user_sessions(self, user_id):
         return self._delete("app_sessions", {"user_id": f"eq.{user_id}"})
+
+    def delete_other_user_sessions(self, user_id, keep_token_sha256):
+        """Sign this user out everywhere except the session doing the asking —
+        a password change ends every session but the browser that made it."""
+        return self._delete("app_sessions", {
+            "user_id": f"eq.{user_id}",
+            "token_sha256": f"neq.{keep_token_sha256}",
+        })

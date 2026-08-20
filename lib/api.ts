@@ -352,6 +352,20 @@ export async function authLogout(token: string): Promise<void> {
   }
 }
 
+/** Change the signed-in user's own password. Throws an ApiError with a
+ * human-readable message on a wrong current password, a too-short new one,
+ * or a database problem — the form shows it verbatim. */
+export async function authChangePassword(
+  session: string,
+  input: { current_password: string; new_password: string },
+): Promise<void> {
+  await call("/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify(input),
+    headers: { "X-Session": session },
+  });
+}
+
 export async function authMe(session: string): Promise<AuthUser | null> {
   try {
     const data = await call("/auth/me", { headers: { "X-Session": session } });

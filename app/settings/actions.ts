@@ -1,6 +1,11 @@
 "use server";
 
-import { saveSettings, sendTestEmail, type NotificationSettings } from "@/lib/api";
+import {
+  authChangePassword,
+  saveSettings,
+  sendTestEmail,
+  type NotificationSettings,
+} from "@/lib/api";
 import { sessionToken } from "@/lib/auth";
 
 /**
@@ -13,6 +18,22 @@ type Result = { ok: true } | { ok: false; error: string };
 
 function failed(error: unknown): Result {
   return { ok: false, error: error instanceof Error ? error.message : "unknown error" };
+}
+
+/** Any signed-in user changing their own password — no admin needed. The
+ * Python half verifies the current password before accepting the new one. */
+export async function changePasswordAction(input: {
+  current_password: string;
+  new_password: string;
+}): Promise<Result> {
+  const session = await sessionToken();
+  if (!session) return { ok: false, error: "signed out — reload the page" };
+  try {
+    await authChangePassword(session, input);
+    return { ok: true };
+  } catch (error) {
+    return failed(error);
+  }
 }
 
 export async function saveNotificationsAction(

@@ -602,6 +602,51 @@ def auth_me(
     return {"user": users.public_user(_session_user(Store(), x_session))}
 
 
+@app.post("/api/py/auth/change-password")
+def auth_change_password(
+    body: dict = Body(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """A signed-in user changes their own password. The current password is
+    required — a session alone (an unlocked laptop) must not be enough to
+    take the account over. Wrong guesses count against the same throttle as
+    the login form, so this route is no softer a brute-force target than
+    /auth/login. On success every OTHER session is signed out; the browser
+    that made the change stays in."""
+    _authorise(x_portal_secret)
+    store = Store()
+    me = _session_user(store, x_session)
+
+    email = users.normalise_email(me.get("email", ""))
+    if store.recent_failed_logins(email, minutes=15) >= 8:
+        raise HTTPException(
+            429, "Too many wrong passwords. Wait 15 minutes and try again.",
+        )
+    if not users.verify_password(
+        body.get("current_password") or "", me.get("password_hash") or ""
+    ):
+        store.record_failed_login(email)
+        raise HTTPException(400, "Your current password isn't right.")
+
+    new_password = body.get("new_password") or ""
+    problem = users.password_problem(new_password)
+    if problem:
+        raise HTTPException(400, problem)
+    if new_password == (body.get("current_password") or ""):
+        raise HTTPException(400, "The new password is the same as the current one.")
+
+    row = store.update_user(
+        me["id"], {"password_hash": users.hash_password(new_password)}
+    )
+    if not row:
+        raise HTTPException(
+            503, f"Could not save — {store.degraded or 'database write failed'}."
+        )
+    store.delete_other_user_sessions(me["id"], users.token_sha(x_session))
+    return {"ok": True}
+
+
 # -- user management (admin only) ------------------------------------------
 
 @app.get("/api/py/users")
