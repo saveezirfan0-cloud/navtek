@@ -1,14 +1,16 @@
 # Finalisation prompts
 
-> **Status (Aug 2026): prompts 1–6 — the installer workflow — are built.**
-> Install items per site, the SLA engine + sweep, the SMS trigger,
-> reallocation, the portal cache webhooks/resync/staleness marker, and
-> AU business days + 6.1 escalation all exist behind `SLA_GO_LIVE_DATE`
-> (unset = off) and `SLA_NOTIFICATIONS_ENABLED` (false = shadow mode).
-> Damon's three questions below still need answers before those switches are
-> flipped — the go-live date especially. Prompts 7–9 (delivery dedup,
-> multi-site quantity check, the missing samples) and the prompt 10 review
-> remain open.
+> **Status (Aug 2026): prompts 1–8 and 10 are built; 9 waits on Navtek.**
+> Install items per site, the SLA engine + sweep, the SMS trigger (Twilio
+> behind `TWILIO_*`, logging stub otherwise), reallocation, the portal cache
+> webhooks/resync/staleness marker, AU business days + 6.1 escalation,
+> webhook delivery dedup, and the quantity check that knows when to shut up
+> all exist behind `SLA_GO_LIVE_DATE` (unset = off) and
+> `SLA_NOTIFICATIONS_ENABLED` (false = shadow mode). The prompt 10 review is
+> `docs/PRE-GO-LIVE-REVIEW.md` — it found and fixed one ownership gap on the
+> portal write-backs. Prompt 9 is blocked on the two missing sample files and
+> an Upsell eOrder from Navtek. Damon's three questions below still gate
+> flipping the switches — the go-live date especially.
 
 Copy-paste prompts to finish the build, one work item per prompt. Run them in
 this order against this repository — each is self-contained, and each ends

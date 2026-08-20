@@ -410,6 +410,8 @@ def portal_action(
         )
     except KeyError as exc:
         raise HTTPException(400, f"missing field: {exc}") from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
 
 
 @app.get("/api/py/portal/vehicle-list")
@@ -426,12 +428,20 @@ def vehicle_list(
     """
     _authorise(x_portal_secret)
     store = Store()
-    if not store.account_by_token(token):
+    account = store.account_by_token(token)
+    if not account:
         raise HTTPException(404, "unknown or inactive link")
+    monday = Monday()
+    # Same ownership rule as the write-backs: item_id is client input, and a
+    # minted asset URL is a data leak if the job belongs to another account.
+    try:
+        portal.require_ownership(monday, store, account, item_id)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
     column_id = config.COLUMNS.get("vehicle_list")
     if not column_id:
         raise HTTPException(503, "Vehicle List column is not configured yet")
-    assets = Monday().asset_urls(item_id, column_id)
+    assets = monday.asset_urls(item_id, column_id)
     if not assets:
         raise HTTPException(404, "no vehicle list attached to this job")
     return {"name": assets[-1]["name"], "url": assets[-1]["public_url"], "expires_in": 3600}
@@ -796,6 +806,8 @@ def portal_my_action(
         )
     except KeyError as exc:
         raise HTTPException(400, f"missing field: {exc}") from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
 
 
 # --------------------------------------------------------------------------
