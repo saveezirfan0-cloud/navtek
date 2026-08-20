@@ -12,9 +12,17 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+// Applies the saved appearance choice before first paint — without this, a
+// dark-mode user sees a white flash on every navigation. Kept tiny and
+// inline; the matching writer lives in app/theme.tsx (THEME_KEY).
+const THEME_INIT = `try{var t=localStorage.getItem("navtek-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-AU">
+    <html lang="en-AU" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
+      </head>
       <body>{children}</body>
     </html>
   );
