@@ -757,7 +757,15 @@ def setup_plan(x_setup_key: str = Header(default="")):
 @app.post("/api/py/setup/columns")
 def setup_columns(x_setup_key: str = Header(default="")):
     _setup_guard(x_setup_key)
-    return bootstrap.create_columns(Monday())
+    monday = Monday()
+    result = bootstrap.create_columns(monday)
+    # The install-item (subitem) field set rides along: multi-site orders
+    # would create it on first use anyway, but preparing it here lets the
+    # columns be checked before a live multi-site order arrives.
+    subitems = bootstrap.prepare_subitem_columns(monday)
+    result["log"].extend(subitems["log"])
+    result["subitem_columns_prepared"] = subitems["prepared"]
+    return result
 
 
 @app.post("/api/py/setup/installers")

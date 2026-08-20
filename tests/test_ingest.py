@@ -38,6 +38,7 @@ BOARD_ID = 18426505553
 # the code writing "✅ Read" against a board that only knows "Read".
 BOARD_COLUMNS = [
     {"id": "file_eorder", "title": "eOrder", "type": "file"},
+    {"id": "text_opp", "title": "Opportunity ID", "type": "text"},
     {"id": "color_status", "title": "eOrder Status", "type": "status",
      "settings_str": json.dumps(
          {"labels": {"1": "Read", "2": "Check", "3": "Failed"}})},
@@ -66,11 +67,14 @@ class FakeMonday:
         self.blob = blob
         self.written = {}
         self.updates = []
+        self.updates_to = []        # (item_id, body) — who each update went to
+        self.matches = []           # rows find_by_column_value returns
         self.renamed = None
         self.subitems_created = []
         self.subitem_written = []   # values handed to create_subitem
         self.sub_columns = []       # columns created on the subitem board
         self.moved = None           # (item_id, group_id) after a group move
+        self.groups_created = []    # month groups created on the fly
         self._existing = existing_values or {}
         self._name = existing_name
         self._group = group or {"id": "g_docusign",
@@ -104,6 +108,10 @@ class FakeMonday:
         self.moved = (item_id, group_id)
         return {"id": item_id}
 
+    def create_group(self, board_id, name):
+        self.groups_created.append(name)
+        return f"g_created_{len(self.groups_created)}"
+
     def asset_urls(self, item_id, column_id):
         return [{"name": "eorder.xlsx", "public_url": "https://example/x"}]
 
@@ -118,7 +126,7 @@ class FakeMonday:
         }
 
     def find_by_column_value(self, *a):
-        return []
+        return list(self.matches)
 
     def set_columns(self, board_id, item_id, values):
         self._enforce_labels(values)
@@ -162,6 +170,7 @@ class FakeMonday:
 
     def post_update(self, item_id, body):
         self.updates.append(body)
+        self.updates_to.append((str(item_id), body))
         return "1"
 
 
@@ -266,6 +275,47 @@ def test_identical_file_dropped_twice_is_skipped():
     # The skip must be VISIBLE — a person re-dropping the file sees Success in
     # monday's automation log, and without this notice concludes the app broke.
     assert any("Already read" in u for u in monday2.updates)
+
+
+# -- feedback from the sandbox drops: files land on spare rows ----------------
+#
+# Staff re-drop a re-issued eOrder on a fresh row at least as often as on the
+# original. The opportunity join already redirected the WRITE to the real row,
+# but the spare row stayed silent — which reads as "the automation ignored me".
+
+def test_a_file_dropped_on_a_spare_row_points_back_at_the_real_order():
+    real_name = "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
+    monday = FakeMonday(blob(KANE), existing_name=real_name)
+    monday.matches = [{"id": "999", "name": real_name}]
+
+    result, _, _ = run(KANE, monday=monday)
+    assert result["ok"]
+    assert str(result["target_item_id"]) == "999"
+    assert result["redirected_from"] == 123
+    # The read summary lands on the real order's row…
+    assert any(to == "999" and "Read from eOrder" in body
+               for to, body in monday.updates_to)
+    # …and the spare row is told where the order went and that it can go.
+    pointers = [body for to, body in monday.updates_to if to == "123"]
+    assert pointers, monday.updates_to
+    assert "Matched an existing order" in pointers[0]
+    assert "KANE CIVIL" in pointers[0] and "deleted" in pointers[0]
+
+
+def test_a_duplicate_on_a_spare_row_names_the_real_row():
+    store = FakeStore()
+    run(KANE, store=store)  # first read, on the real row
+
+    real_name = "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
+    monday = FakeMonday(blob(KANE), existing_name=real_name)
+    monday.matches = [{"id": "999", "name": real_name}]
+
+    second, _, _ = run(KANE, monday=monday, store=store)
+    assert second["skipped"] == "identical file already read"
+    assert monday.written == {}
+    to, body = monday.updates_to[0]
+    assert to == "123" and "Already read" in body
+    assert "KANE CIVIL" in body and "spare row can be deleted" in body
 
 
 # -- every webhook delivery leaves a trace, including the invisible ones ------
@@ -760,6 +810,54 @@ def test_an_order_already_in_a_month_group_stays_put():
     result, monday, _ = run(KANE, monday=monday)
     assert result["ok"]
     assert monday.moved is None
+
+
+def test_the_months_group_is_created_when_the_board_lacks_one():
+    """On the 1st of a new month the group doesn't exist yet. Leaving the row
+    unfiled every month-start was the worse failure — the group is created
+    with exactly the title staff would give it."""
+    class NoMonthGroups(FakeMonday):
+        def board_groups(self, board_id):
+            return [{"id": "g_docusign", "title": "New Opps/Sent DocuSigns"}]
+
+    monday = NoMonthGroups(blob(KANE))
+    result, monday, _ = run(KANE, monday=monday)
+    assert result["ok"]
+    from datetime import datetime
+    now = datetime.now()
+    assert monday.groups_created == [f"{ingest.MONTHS[now.month - 1]} {now.year}"]
+    assert monday.moved == (123, "g_created_1")
+
+
+# -- Setup prepares the install-item field set up front -----------------------
+
+def test_setup_prepares_the_subitem_field_set():
+    from _lib import bootstrap
+    monday = FakeMonday(blob(KANE))
+    ingest._SUB_COLS_CACHE.clear()
+    result = bootstrap.prepare_subitem_columns(monday, BOARD_ID)
+    assert result["prepared"] is True
+    titles = [c["title"] for c in monday.sub_columns]
+    assert "Site Address" in titles and "Units Total" in titles
+    assert "Site Phone" in titles and "Booked Date" in titles
+    # Idempotent — a second run binds what exists and creates nothing new.
+    before = len(monday.sub_columns)
+    bootstrap.prepare_subitem_columns(monday, BOARD_ID)
+    assert len(monday.sub_columns) == before
+
+
+def test_setup_skips_subitem_columns_until_the_board_exists():
+    from _lib import bootstrap
+
+    class NoSubitemsYet(FakeMonday):
+        def board_columns(self, board_id):
+            return [c for c in super().board_columns(board_id)
+                    if c["type"] != "subtasks"]
+
+    ingest._SUB_COLS_CACHE.clear()
+    result = bootstrap.prepare_subitem_columns(NoSubitemsYet(blob(KANE)), BOARD_ID)
+    assert result["prepared"] is False
+    assert "first multi-site order" in result["log"][0]
 
 
 def test_multi_site_subitems_carry_their_fields_on_their_own_board(monkeypatch):

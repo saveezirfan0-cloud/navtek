@@ -77,14 +77,21 @@ def _file_into_month_group(monday, board_id, item_id, existing):
     Rows start out wherever staff created them — "New Opps/Sent DocuSigns" on
     the live board — and were staying there. Once the eOrder is read, the row
     is filed. A row already sitting in ANY month group is left alone: a
-    revised eOrder months later must not drag an old order forward. Filing is
-    best-effort — it must never cost the order.
+    revised eOrder months later must not drag an old order forward. When the
+    month's group doesn't exist yet (the 1st of a new month), it is created
+    with exactly the title staff would give it — leaving the row unfiled
+    every 1st was the worse failure. Filing is best-effort — it must never
+    cost the order.
     """
     try:
         group = (existing or {}).get("group") or {}
         if _in_a_month_group(group.get("title")):
             return None
         group_id = current_group_id(monday, board_id, strict=True)
+        if not group_id:
+            when = datetime.now()
+            group_id = monday.create_group(
+                board_id, f"{MONTHS[when.month - 1]} {when.year}")
         if group_id and group_id != group.get("id"):
             monday.move_to_group(item_id, group_id)
             return group_id
@@ -262,6 +269,23 @@ def _run(monday, store, payload, result, started):
         )
         return {**result, "ok": False, "reason": "no opportunity_id"}
 
+    # --- find the real row ----------------------------------------------
+    #
+    # Resolved BEFORE the dedupe gate so every notice below can point at the
+    # order's actual row. Staff drop a re-issued eOrder on a fresh row at
+    # least as often as on the original (the first live drops proved it), and
+    # a row that stays silent while some other row gets the update looks
+    # exactly like the automation being broken.
+    target_id, created = _resolve_item(monday, board_id, item_id, opportunity_id, cols)
+    result["target_item_id"] = target_id
+    result["created"] = created
+    redirected = str(target_id) != str(item_id)
+    if redirected:
+        result["redirected_from"] = item_id
+
+    existing = monday.item(target_id) or {}
+    existing_text = {c["id"]: c.get("text") for c in existing.get("column_values", [])}
+
     # --- idempotency (criterion 2) -------------------------------------
     #
     # Skipping must still be VISIBLE. This happens when a person re-drops a
@@ -276,10 +300,9 @@ def _run(monday, store, payload, result, started):
             try:
                 monday.post_update(
                     item_id,
-                    "ℹ️ <b>Already read</b> — this exact file has been processed "
-                    "before, so nothing was changed. A revised eOrder (a "
-                    "different file) will be read as an update. (To re-read "
-                    "identical files while testing, set ALLOW_DUPLICATE_FILES.)",
+                    mapping.already_read_body(
+                        existing.get("name") if redirected else None
+                    ),
                 )
             except Exception:  # noqa: BLE001 - the notice must never fail the skip
                 pass
@@ -315,14 +338,6 @@ def _run(monday, store, payload, result, started):
             installer_ids = [installer_match["account"]["monday_item_id"]]
 
     status, warnings = mapping.validate(parsed, installer_match)
-
-    # --- find or create the row ----------------------------------------
-    target_id, created = _resolve_item(monday, board_id, item_id, opportunity_id, cols)
-    result["target_item_id"] = target_id
-    result["created"] = created
-
-    existing = monday.item(target_id) or {}
-    existing_text = {c["id"]: c.get("text") for c in existing.get("column_values", [])}
 
     proposed = mapping.to_column_values(parsed, cols, installer_item_ids=installer_ids)
     # A revised eOrder is allowed to correct fields; a first read only fills gaps.
@@ -397,6 +412,18 @@ def _run(monday, store, payload, result, started):
         target_id,
         mapping.update_body(parsed, status, warnings, fields_written, changes),
     )
+
+    # A file dropped on a spare row must not leave that row silent — the
+    # person who dropped it is watching THIS row, not the one the
+    # opportunity join found.
+    if redirected:
+        try:
+            monday.post_update(
+                item_id,
+                mapping.redirect_body(values.get("name") or existing.get("name")),
+            )
+        except Exception:  # noqa: BLE001 - the pointer must never cost the order
+            pass
 
     # The ingest can complete the SMS rule's second half — a dispatch date
     # arriving by file while the Installer column is already set (or the
