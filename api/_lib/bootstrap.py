@@ -54,11 +54,20 @@ def plan_columns(monday, board_id=None):
 
 
 def create_columns(monday, board_id=None):
-    """Create the §3.1 columns. Returns the full COLUMN_IDS map."""
+    """Create the §3.1 columns. Returns the full COLUMN_IDS map.
+
+    One column monday refuses must not abort the rest — "This column type is
+    not supported yet in the API" on a single type used to leave every column
+    after it uncreated, and the step showing nothing but the error. Refusals
+    are logged with the exact title so the column can be added by hand, and
+    everything else still lands.
+    """
+    from .monday import MondayError
+
     board_id = board_id or config.ORDERS_BOARD_ID
     existing = {c["title"].strip().lower(): c for c in monday.board_columns(board_id)}
     resolved = {k: v for k, v in config.COLUMNS.items() if v}
-    log = []
+    log, failed = [], []
 
     for key, title, ctype, defaults in ORDER_COLUMNS:
         found = existing.get(title.lower())
@@ -66,11 +75,18 @@ def create_columns(monday, board_id=None):
             resolved[key] = found["id"]
             log.append(f"exists   {title} ({found['id']})")
             continue
-        created = monday.create_column(board_id, title, ctype, defaults)
+        try:
+            created = monday.create_column(board_id, title, ctype, defaults)
+        except MondayError as exc:
+            failed.append(title)
+            log.append(f"failed   {title} — {exc}. Create a '{ctype}' column "
+                       f"titled '{title}' on the board by hand, then re-run "
+                       "this step to bind it.")
+            continue
         resolved[key] = created["id"]
         log.append(f"created  {title} ({created['id']})")
 
-    return {"column_ids": resolved, "log": log}
+    return {"column_ids": resolved, "log": log, "failed": failed}
 
 
 def prepare_subitem_columns(monday, board_id=None):
@@ -113,10 +129,19 @@ def create_installer_link(monday, installers_board_id, orders_board_id=None):
         if column["title"].strip().lower() == title.lower() and column["type"] == ctype:
             return {"column_id": column["id"], "created": False}
 
-    created = monday.create_column(
-        orders_board_id, title, ctype,
-        {"boardIds": [int(installers_board_id)]},
-    )
+    from .monday import MondayError
+
+    try:
+        created = monday.create_column(
+            orders_board_id, title, ctype,
+            {"boardIds": [int(installers_board_id)]},
+        )
+    except MondayError as exc:
+        # Some accounts' API refuses to create connect-boards columns. The
+        # rest of the installer setup still stands; the column can be added by
+        # hand (Connect boards → the Installer Accounts board) and this step
+        # re-run to bind it.
+        return {"column_id": None, "created": False, "error": str(exc)}
     return {"column_id": created["id"], "created": True}
 
 

@@ -191,17 +191,26 @@ class Monday:
 
     # -- writes ------------------------------------------------------------
 
-    def set_columns(self, board_id, item_id, values):
-        """change_multiple_column_values. `values` is {column_id: value}."""
+    def set_columns(self, board_id, item_id, values, create_labels_if_missing=False):
+        """change_multiple_column_values. `values` is {column_id: value}.
+
+        create_labels_if_missing lets a status write ADD its label to the
+        column. Only for labels this app deliberately introduces (the
+        "Duplicate" marker); ordinary writes go through label alignment
+        instead, so a typo can never grow the board's label set.
+        """
         if not values:
             return None
         data = self.gql(
             """
-            mutation ($b: ID!, $i: ID!, $v: JSON!) {
-              change_multiple_column_values (board_id: $b, item_id: $i, column_values: $v) { id }
+            mutation ($b: ID!, $i: ID!, $v: JSON!, $c: Boolean) {
+              change_multiple_column_values (board_id: $b, item_id: $i,
+                                             column_values: $v,
+                                             create_labels_if_missing: $c) { id }
             }
             """,
-            {"b": str(board_id), "i": str(item_id), "v": json.dumps(values)},
+            {"b": str(board_id), "i": str(item_id), "v": json.dumps(values),
+             "c": bool(create_labels_if_missing)},
         )
         return data["change_multiple_column_values"]
 

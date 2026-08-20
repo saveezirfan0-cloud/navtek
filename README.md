@@ -257,12 +257,10 @@ without clobbering existing monday values.
 - **Order Type**: where Rental vs Outright comes from. Blocks §4.
 - **An Upsell eOrder** for the sample set. That ACV branch has no test
   exercising it; `verify.py` says so on every run rather than passing quietly.
-- **Two samples are missing** from `samples/` — Cosmo Cranes (the vanity-phone
-  case, `1300 1 COSMO`) and Qualityvend (the four-site Multiple Addresses
-  case). Their expectations are already in `fixtures/expected.json`, so
-  `verify.py` reports them as MISSING and fails rather than passing on a
-  reduced set.
 - **§8 of the brief** lists the multi-site sample as *Qantas Road Express /
   Upsell*, but the file in the pack is *Qualityvend / Add-On*, which is what
   §4.1 and the parser agree on. Worth correcting — as written it implies the
-  Upsell branch has a sample when it doesn't.
+  Upsell branch has a sample when it doesn't. The brief also calls it a
+  four-site order; the real file has **two** delivery sites (FFT Technology,
+  8 units + GPS Tech, 7 units = the order's 15), confirmed against the
+  spreadsheet itself.

@@ -306,6 +306,8 @@ def _run(monday, store, payload, result, started):
                 )
             except Exception:  # noqa: BLE001 - the notice must never fail the skip
                 pass
+            if redirected:
+                _mark_duplicate(monday, board_id, item_id, cols)
             return {**result, "ok": True, "skipped": "identical file already read"}
         result["duplicate_reread"] = True
 
@@ -415,7 +417,8 @@ def _run(monday, store, payload, result, started):
 
     # A file dropped on a spare row must not leave that row silent — the
     # person who dropped it is watching THIS row, not the one the
-    # opportunity join found.
+    # opportunity join found. The row is also stamped Duplicate so it reads
+    # as one at board level, not only inside its updates.
     if redirected:
         try:
             monday.post_update(
@@ -424,6 +427,7 @@ def _run(monday, store, payload, result, started):
             )
         except Exception:  # noqa: BLE001 - the pointer must never cost the order
             pass
+        _mark_duplicate(monday, board_id, item_id, cols)
 
     # The ingest can complete the SMS rule's second half — a dispatch date
     # arriving by file while the Installer column is already set (or the
@@ -534,6 +538,11 @@ def _ensure_subitem_columns(monday, sub_board_id):
               if key in _SUBITEM_KEYS]
     wanted.append(("order_date", "Order Date", "date", None))
 
+    if config.INSTALLERS_BOARD_ID:
+        key, title, ctype = columns_mod.INSTALLER_LINK_COLUMN
+        wanted.append((key, title, ctype,
+                       {"boardIds": [int(config.INSTALLERS_BOARD_ID)]}))
+
     existing = {c["title"].strip().lower(): c
                 for c in monday.board_columns(sub_board_id)}
     cols = {}
@@ -541,19 +550,15 @@ def _ensure_subitem_columns(monday, sub_board_id):
         found = existing.get(title.lower())
         if found and columns_mod._compatible(found["type"], ctype):
             cols[key] = found["id"]
-        else:
+            continue
+        try:
             cols[key] = monday.create_column(sub_board_id, title, ctype, defaults)["id"]
-
-    if config.INSTALLERS_BOARD_ID:
-        key, title, ctype = columns_mod.INSTALLER_LINK_COLUMN
-        found = existing.get(title.lower())
-        if found and columns_mod._compatible(found["type"], ctype):
-            cols[key] = found["id"]
-        else:
-            cols[key] = monday.create_column(
-                sub_board_id, title, ctype,
-                {"boardIds": [int(config.INSTALLERS_BOARD_ID)]},
-            )["id"]
+        except MondayError as exc:
+            # Some types monday's API refuses to create (board_relation on
+            # some accounts: "This column type is not supported yet in the
+            # API"). One refused column must not cost the rest of the field
+            # set — the key is simply left unmapped and that field skipped.
+            print(f"subitem column '{title}' not created: {exc}")
 
     _SUB_COLS_CACHE[str(sub_board_id)] = cols
     return cols
@@ -618,6 +623,26 @@ def _sync_subitems(monday, parent_id, sites, board_id):
                         )
         written.append({"id": created["id"], "name": name})
     return written, notes
+
+
+def _mark_duplicate(monday, board_id, item_id, cols):
+    """Stamp a spare row's eOrder Status "Duplicate" so the row reads as one
+    at board level — filterable, and impossible to mistake for a live order.
+
+    The label is added to the column on first use (create_labels_if_missing).
+    That deliberately bypasses label alignment, whose job is stopping typos
+    from growing the board's label set — this is the one label the app
+    introduces on purpose. Best-effort: the marker must never cost the order.
+    """
+    try:
+        column_id = (cols or {}).get("eorder_status")
+        if column_id:
+            monday.set_columns(
+                board_id, item_id, {column_id: {"label": "Duplicate"}},
+                create_labels_if_missing=True,
+            )
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
 
 
 def _fail(monday, board_id, item_id, message, cols=None):

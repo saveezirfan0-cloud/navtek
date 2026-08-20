@@ -859,10 +859,17 @@ def setup_installers(x_setup_key: str = Header(default="")):
     monday = Monday()
     result = bootstrap.ensure_installer_board(monday)
     link = bootstrap.create_installer_link(monday, result["board_id"])
-    result.setdefault("log", []).append(
-        f"{'created' if link['created'] else 'exists'}  Installer connect column "
-        f"({link['column_id']})"
-    )
+    if link.get("error"):
+        result.setdefault("log", []).append(
+            f"failed   Installer connect column — {link['error']}. Add a "
+            "Connect boards column titled 'Installer' (linked to the "
+            "Installer Accounts board) by hand, then re-run this step."
+        )
+    else:
+        result.setdefault("log", []).append(
+            f"{'created' if link['created'] else 'exists'}  Installer connect "
+            f"column ({link['column_id']})"
+        )
     result["installer_column_id"] = link["column_id"]
     return result
 

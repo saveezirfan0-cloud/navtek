@@ -551,6 +551,7 @@ long it took.
 | Diag says a package is missing | `requirements.txt` isn't being installed. It must be at the top level of the repository; there is also a copy at `api/requirements.txt`. Confirm both uploaded, then redeploy. |
 | Diag says a file is missing from `api/_lib` | Upload it. Folders beginning with an underscore are easy to miss in a drag-and-drop upload. |
 | A second Installer Accounts board appeared | `INSTALLERS_BOARD_ID` wasn't set before step 3. Set it, redeploy, delete the empty duplicate, run step 3 again. |
+| Step 2 or 3 logs `failed … This column type is not supported yet in the API` | monday's API refuses to create that column type on this account (usually the **Installer** connect-boards column). Everything else was still created. Add the named column by hand with the exact title shown, then re-run the step to bind it. |
 | Step 6: no file column called 'eOrder' | Step 2 hasn't run, or the column was renamed. It must be a **File** column titled exactly `eOrder`. |
 | Build fails mentioning `app/api` | Someone added a route handler under `app/api`. This project can't use those — see the note in `next.config.mjs`. |
 

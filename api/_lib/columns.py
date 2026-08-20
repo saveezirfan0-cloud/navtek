@@ -33,7 +33,7 @@ ORDER_COLUMNS = [
     # truth either way (see status_labels below); these are just the defaults
     # for a fresh column.
     ("eorder_status", "eOrder Status", "status",
-     {"labels": {"1": "Read", "2": "Check", "3": "Failed"}}),
+     {"labels": {"1": "Read", "2": "Check", "3": "Failed", "4": "Duplicate"}}),
     ("site_contact", "Site Contact", "text", None),
     ("site_phone", "Site Phone", "phone", None),
     ("site_email", "Site Email", "email", None),
