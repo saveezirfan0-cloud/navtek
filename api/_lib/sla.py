@@ -69,6 +69,59 @@ def sweep(monday, store, today=None):
     }
 
 
+def preview(monday, store, today=None):
+    """The engine's state, read-only — the SLA console's data.
+
+    Every job inside the engine's window (dispatched on/after go-live, not
+    yet contacted) with its clock and countdown, worst first. Unlike sweep(),
+    this records nothing and claims nothing, so refreshing the console can't
+    consume the dedup keys the real sweep depends on.
+    """
+    go_live = config.sla_go_live()
+    mode = ("off" if not go_live
+            else "live" if config.SLA_NOTIFICATIONS_ENABLED
+            else "shadow")
+    today = today or date.today()
+    jobs_out, checked = [], 0
+
+    if go_live:
+        for account in store.installer_accounts():
+            jobs, _ = portal.fetch_jobs(monday, store, account)
+            state = account.get("state") or "NSW"
+            for job in jobs:
+                checked += 1
+                dispatched = portal._as_date(job.get("dispatched"))
+                if (not dispatched or dispatched < go_live
+                        or dispatched > today or job.get("contacted")):
+                    continue
+                start = portal.sla_clock_start(store, job["item_id"], dispatched)
+                age = portal.business_days_since(start, state=state, today=today) or 0
+                days_left = config.SLA_BUSINESS_DAYS - age
+                jobs_out.append({
+                    "item_id": job["item_id"],
+                    "customer": job.get("customer"),
+                    "account": account["account_name"],
+                    "state": state,
+                    "dispatched": dispatched.isoformat(),
+                    "clock_start": start.isoformat(),
+                    "sla_age_business_days": age,
+                    "days_left": days_left,
+                    "status": ("breached" if days_left < 0
+                               else "due_now" if days_left == 0
+                               else "on_track"),
+                })
+
+    jobs_out.sort(key=lambda j: j["days_left"])
+    return {
+        "mode": mode,
+        "go_live": go_live.isoformat() if go_live else None,
+        "sla_business_days": config.SLA_BUSINESS_DAYS,
+        "notifications_enabled": config.SLA_NOTIFICATIONS_ENABLED,
+        "jobs_checked": checked,
+        "jobs": jobs_out,
+    }
+
+
 def _assess(store, account, job, go_live, state, today):
     """Is this job in breach? None, or the breach record."""
     dispatched = portal._as_date(job.get("dispatched"))

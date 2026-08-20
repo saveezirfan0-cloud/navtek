@@ -1,37 +1,37 @@
+import Link from "next/link";
 import AutoRefresh from "./AutoRefresh";
+import CsvButton from "./CsvButton";
 import Nav from "./Nav";
 import NoAccess from "./NoAccess";
-import RecentTable from "./RecentTable";
+import { Pager, Pill, pageParam } from "./ui";
 import { getHealth, getRecent } from "@/lib/api";
+import { mondayItemUrl, when } from "@/lib/format";
 import { requireViewer } from "@/lib/auth";
 
 export const metadata = { title: "Orders · Navtek" };
 
 export const dynamic = "force-dynamic";
 
-const HOOK_PILL: Record<string, [string, string]> = {
-  processed: ["p-read", "Processed"],
-  skipped: ["p-check", "Skipped"],
-  failed: ["p-failed", "Failed"],
-};
+const PAGE_SIZE = 25;
+const STATUSES = ["read", "check", "failed"] as const;
 
-function when(iso: string) {
-  const d = new Date(iso);
-  const thisYear = d.getFullYear() === new Date().getFullYear();
-  return d.toLocaleString("en-AU", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-    ...(thisYear ? {} : { year: "numeric" }),
-  });
-}
-
-export default async function Dashboard() {
-  // All three in flight together — the gate is checked when they land, and
+export default async function Dashboard({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string; status?: string; q?: string }>;
+}) {
+  // All in flight together — the gate is checked when they land, and
   // health/recent carry nothing user-scoped, so fetching before the check
   // costs nothing and saves a full round trip on the most-visited page.
+  const params = await searchParams;
+  const page = pageParam(params.page);
+  const status = STATUSES.find((s) => s === params.status) ?? "";
+  const q = (params.q ?? "").trim();
+
   const [{ user, realUser }, health, recent] = await Promise.all([
     requireViewer(),
     getHealth(),
-    getRecent(),
+    getRecent({ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, status, q }),
   ]);
   if (!user.can_orders && !user.is_admin) {
     return (
@@ -43,22 +43,30 @@ export default async function Dashboard() {
   }
 
   const rows = recent.ingests;
+  const pages = Math.max(1, Math.ceil(recent.total / PAGE_SIZE));
+  const filtered = Boolean(status || q);
 
-  const counts = {
-    read: rows.filter((r) => r.status === "read").length,
-    check: rows.filter((r) => r.status === "check").length,
-    failed: rows.filter((r) => r.status === "failed").length,
+  const href = (over: { page?: number; status?: string; q?: string }) => {
+    const merged = {
+      page: over.page ?? 1, // a filter change starts from the newest rows
+      status: over.status ?? status,
+      q: over.q ?? q,
+    };
+    const search = new URLSearchParams();
+    if (merged.page > 1) search.set("page", String(merged.page));
+    if (merged.status) search.set("status", merged.status);
+    if (merged.q) search.set("q", merged.q);
+    const text = search.toString();
+    return text ? `/?${text}` : "/";
   };
 
   const warnings = health?.config_warnings ?? [];
   const notReady =
     !health || health.missing_secrets.length > 0 || health.unmapped_columns.length > 0;
 
-  const hooks = recent.webhooks ?? [];
-
   return (
     <>
-      <AutoRefresh seconds={15} />
+      {page === 1 && !filtered && <AutoRefresh seconds={15} />}
       <Nav current="/" user={user} realUser={realUser} />
       <div className="admin">
         <div className="head">
@@ -97,15 +105,15 @@ export default async function Dashboard() {
         <div className="panel">
           <div className="grid">
             <div className="stat">
-              <div className="v">{counts.read}</div>
+              <div className="v">{recent.counts?.read ?? 0}</div>
               <div className="k">Read cleanly</div>
             </div>
             <div className="stat">
-              <div className="v">{counts.check}</div>
+              <div className="v">{recent.counts?.check ?? 0}</div>
               <div className="k">Need a look</div>
             </div>
             <div className="stat">
-              <div className="v">{counts.failed}</div>
+              <div className="v">{recent.counts?.failed ?? 0}</div>
               <div className="k">Failed</div>
             </div>
             <div className="stat">
@@ -118,12 +126,12 @@ export default async function Dashboard() {
             </div>
           </div>
           <p className="tiny" style={{ marginTop: 10 }}>
-            Counts cover the {rows.length} most recent reads.
+            Counts cover every read ever recorded.
           </p>
         </div>
 
         <div className="panel">
-          <h2>Recent reads</h2>
+          <h2>Reads</h2>
           {!recent.enabled ? (
             <p className="empty">
               <b>Nothing is being recorded.</b>{" "}
@@ -141,74 +149,143 @@ export default async function Dashboard() {
                 to. What is lost is the duplicate check and this history.
               </span>
             </p>
-          ) : rows.length === 0 ? (
-            <p className="empty">
-              Nothing read yet. Drop an eOrder onto the eOrder column of a row in
-              TN Orders and it will appear here.
-            </p>
           ) : (
-<RecentTable rows={rows} />
-          )}
-        </div>
+            <>
+              <div className="table-tools">
+                <form action="/" method="get">
+                  {status && <input type="hidden" name="status" value={status} />}
+                  <input
+                    className="field"
+                    style={{ marginBottom: 0, maxWidth: 260 }}
+                    type="search"
+                    name="q"
+                    defaultValue={q}
+                    placeholder="Search order, ID, note…"
+                    aria-label="Search every recorded read"
+                  />
+                </form>
+                <div className="chips" role="group" aria-label="Filter by status">
+                  <Link className={`chip-btn ${status === "" ? "on" : ""}`}
+                        href={href({ status: "" })}>
+                    All
+                  </Link>
+                  {STATUSES.map((s) => (
+                    <Link key={s} className={`chip-btn ${status === s ? "on" : ""}`}
+                          href={href({ status: s })}>
+                      {s === "read" ? "Read" : s === "check" ? "Check" : "Failed"}
+                    </Link>
+                  ))}
+                </div>
+                <CsvButton rows={rows} />
+              </div>
 
-        <div className="panel">
-          <h2>Webhook deliveries</h2>
-          <p className="empty" style={{ marginTop: 0 }}>
-            Every call monday made to this app, including the ones that changed
-            nothing. monday&rsquo;s own automation log shows all of these as
-            Success — a <b>Skipped</b> row here is why a drop can succeed in
-            monday and still change nothing (usually the identical file was
-            already read).
-          </p>
-          {recent.enabled && recent.webhook_log_ready === false ? (
-            <p className="empty">
-              <b>Not recording yet.</b> Run{" "}
-              <code>supabase/migrations/0004_webhook_log.sql</code> in the
-              Supabase SQL Editor to switch this log on.
-            </p>
-          ) : hooks.length === 0 ? (
-            <p className="empty">No deliveries recorded yet.</p>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Order</th>
-                  <th>Outcome</th>
-                  <th>Detail</th>
-                  <th>When</th>
-                  <th>Took</th>
-                </tr>
-              </thead>
-              <tbody>
-                {hooks.map((h, i) => {
-                  const [cls, label] = HOOK_PILL[h.outcome] ?? ["p-check", h.outcome];
-                  return (
-                    <tr key={i}>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>
-                          {h.file_name ?? (h.monday_item_id ? `item ${h.monday_item_id}` : "—")}
-                        </div>
-                        {h.opportunity_id && (
-                          <div className="mono" style={{ color: "var(--mid)" }}>
-                            {h.opportunity_id}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <span className={`pill ${cls}`}>{label}</span>
-                      </td>
-                      <td style={{ color: "var(--mid)" }}>
-                        {h.reason ?? h.status ?? ""}
-                      </td>
-                      <td className="num">{when(h.created_at)}</td>
-                      <td className="num">
-                        {h.duration_ms ? `${(h.duration_ms / 1000).toFixed(1)}s` : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+              {recent.total === 0 ? (
+                <p className="empty">
+                  {filtered ? (
+                    "Nothing recorded matches that filter."
+                  ) : (
+                    <>
+                      Nothing read yet. Drop an eOrder onto the eOrder column of
+                      a row in TN Orders and it will appear here.
+                    </>
+                  )}
+                </p>
+              ) : rows.length === 0 ? (
+                <p className="empty">
+                  Nothing this far back.{" "}
+                  <Link href={href({ page: 1 })}>Back to the newest</Link>.
+                </p>
+              ) : (
+                <>
+                  <div className="scroll-x">
+                    <table className="rows">
+                      <thead>
+                        <tr>
+                          <th>Order</th>
+                          <th>Status</th>
+                          <th>Notes</th>
+                          <th>When</th>
+                          <th>Took</th>
+                          <th>File</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r, i) => {
+                          const boardUrl = mondayItemUrl(
+                            health?.monday_slug, health?.orders_board, r.monday_item_id);
+                          return (
+                            <tr key={i}>
+                              <td data-label="Order">
+                                <div style={{ fontWeight: 600 }}>
+                                  {r.monday_item_id ? (
+                                    <Link href={`/orders/${r.monday_item_id}`}>
+                                      {r.item_name ?? r.file_name ?? `item ${r.monday_item_id}`}
+                                    </Link>
+                                  ) : (
+                                    r.item_name ?? r.file_name ?? "—"
+                                  )}
+                                </div>
+                                <div className="mono" style={{ color: "var(--mid)" }}>
+                                  {r.opportunity_id}
+                                  {r.opportunity_id && boardUrl && " · "}
+                                  {boardUrl && (
+                                    <a href={boardUrl} target="_blank" rel="noreferrer">
+                                      open in monday ↗
+                                    </a>
+                                  )}
+                                </div>
+                              </td>
+                              <td data-label="Status"><Pill kind={r.status} /></td>
+                              <td data-label="Notes" style={{ color: "var(--mid)" }}>
+                                {r.error ??
+                                  [...r.changed_fields, ...r.warnings].slice(0, 3).join(" · ") ??
+                                  ""}
+                              </td>
+                              <td data-label="When" className="num">{when(r.created_at)}</td>
+                              <td data-label="Took" className="num">
+                                {r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : "—"}
+                              </td>
+                              <td data-label="File">
+                                {r.monday_item_id ? (
+                                  // monday asset URLs expire hourly, so the endpoint
+                                  // mints a fresh one per click — never embed one here.
+                                  <a
+                                    className="filelink"
+                                    href={`/api/py/eorder/file?item_id=${r.monday_item_id}`}
+                                    title={r.file_name ?? "Download the eOrder file"}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    ⬇ View
+                                  </a>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <Pager
+                    page={page}
+                    pages={pages}
+                    total={recent.total}
+                    unit="reads"
+                    hrefFor={(p) => href({ page: p })}
+                  />
+                </>
+              )}
+
+              <p className="tiny" style={{ marginTop: 10 }}>
+                A drop that changed nothing (a duplicate file, a no-file
+                delivery) never lands here — see{" "}
+                <Link href="/deliveries">Deliveries</Link> for every call
+                monday made.
+              </p>
+            </>
           )}
         </div>
 

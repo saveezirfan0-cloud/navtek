@@ -2,7 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["syd1"],
   "crons": [
-    { "path": "/api/py/sla/sweep", "schedule": "0 21 * * *" }
+    { "path": "/api/py/sla/sweep", "schedule": "0 21 * * *" },
+    { "path": "/api/py/portal/resync", "schedule": "30 * * * *" }
   ],
   "functions": {
     "api/index.py": {
@@ -10,9 +11,5 @@
       "maxDuration": 60,
       "includeFiles": "api/_lib/**"
     }
-  },
-  "crons": [
-    { "path": "/api/py/sla/sweep", "schedule": "0 21 * * *" },
-    { "path": "/api/py/portal/resync", "schedule": "30 * * * *" }
-  ]
+  }
 }

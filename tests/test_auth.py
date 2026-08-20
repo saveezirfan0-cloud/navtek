@@ -347,24 +347,24 @@ def test_the_activity_feed_is_admin_only():
 
 def test_the_activity_feed_merges_webhooks_and_file_reads(monkeypatch):
     fake = wired(monkeypatch)
-    fake.recent_events = lambda limit=100: [
+    fake.events_page = lambda limit=50, offset=0: ([
         {"action": "viewed", "monday_item_id": 1, "installer_account_id": None,
          "payload": {}, "created_at": "2026-08-20T01:00:00+00:00"},
-    ]
-    fake.recent_webhooks = lambda limit=30: [
+    ], 1)
+    fake.webhook_page = lambda limit=25, offset=0, outcome=None, q=None: ([
         {"monday_item_id": 2, "opportunity_id": "006X", "file_name": "a.xlsx",
          "outcome": "skipped", "reason": "identical file already read",
          "status": None, "duration_ms": 900,
          "created_at": "2026-08-20T03:00:00+00:00"},
-    ]
-    fake.recent_ingests = lambda limit=20: [
+    ], 1)
+    fake.ingest_page = lambda limit=20, offset=0, status=None, q=None: ([
         {"monday_item_id": 3, "opportunity_id": "006Y", "file_name": "b.xlsx",
          "status": "check", "warnings": ["phone: vanity number converted"],
          "changed_fields": [], "error": None, "duration_ms": 5500,
          "created_at": "2026-08-20T02:00:00+00:00"},
-    ]
-    fake.recent_unknown_reasons = lambda limit=50: []
-    fake.recent_notifications = lambda limit=50: []
+    ], 1)
+    fake.notifications_page = lambda limit=50, offset=0: ([], 0)
+    fake.reasons_page = lambda limit=50, offset=0: ([], 0)
 
     c = client()
     token = bootstrap_admin(c)["token"]
@@ -376,3 +376,4 @@ def test_the_activity_feed_merges_webhooks_and_file_reads(monkeypatch):
     assert data["events"][0]["payload"]["detail"] == "identical file already read"
     assert data["events"][1]["payload"]["file"] == "b.xlsx"
     assert data["events"][1]["payload"]["took"] == "5.5s"
+    assert data["events_total"] == 1

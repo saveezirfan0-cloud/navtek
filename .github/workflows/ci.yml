@@ -1,0 +1,38 @@
+# Every push runs what a careful contributor would run by hand: the Python
+# suite, the TypeScript compiler, ESLint, a production build, and a browser
+# smoke test against that build. Nothing here needs credentials — the app is
+# designed to degrade without them, and the smoke test asserts exactly that.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest tests/ -q --ignore=tests/e2e
+
+  web:
+    name: Lint, typecheck, build, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run smoke

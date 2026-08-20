@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { AuthUser, InstallerAccountRef } from "@/lib/api";
+import Toast from "../Toast";
 import { createUserAction, startPreviewAction, updateUserAction } from "./actions";
 
 export default function UsersAdmin({
@@ -17,13 +18,20 @@ export default function UsersAdmin({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
 
-  const update = (input: Parameters<typeof updateUserAction>[0]) =>
+  const update = (
+    input: Parameters<typeof updateUserAction>[0],
+    note = "Saved — applies on their next click",
+  ) =>
     start(async () => {
       setError(null);
+      setSaved(null);
       const result = await updateUserAction(input);
-      if (result.ok) router.refresh();
-      else setError(result.error);
+      if (result.ok) {
+        setSaved(note);
+        router.refresh();
+      } else setError(result.error);
     });
 
   return (
@@ -32,6 +40,9 @@ export default function UsersAdmin({
         <div className="panel">
           <div className="warnbox"><b>That didn&rsquo;t save.</b> {error}</div>
         </div>
+      )}
+      {saved && !error && (
+        <Toast message={saved} onDone={() => setSaved(null)} />
       )}
 
       <div className="panel">
@@ -128,7 +139,9 @@ export default function UsersAdmin({
                       <td>
                         <ResetPassword
                           disabled={pending}
-                          onReset={(password) => update({ id: u.id, password })}
+                          onReset={(password) =>
+                            update({ id: u.id, password },
+                                   `Password reset for ${u.name}`)}
                         />
                       </td>
                       <td>
@@ -160,7 +173,8 @@ export default function UsersAdmin({
         )}
       </div>
 
-      <CreateUser accounts={accounts} onError={setError} />
+      <CreateUser accounts={accounts} onError={setError}
+                  onCreated={(name) => setSaved(`${name} added — pass the starting password on`)} />
     </>
   );
 }
@@ -237,9 +251,11 @@ function ResetPassword({
 function CreateUser({
   accounts,
   onError,
+  onCreated,
 }: {
   accounts: InstallerAccountRef[];
   onError: (message: string | null) => void;
+  onCreated: (name: string) => void;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -264,6 +280,7 @@ function CreateUser({
         installer_account_id: form.installer_account_id || null,
       });
       if (result.ok) {
+        onCreated(form.name);
         setForm({ name: "", email: "", password: "", can_orders: true,
                   can_installer: false, is_admin: false, installer_account_id: "" });
         router.refresh();

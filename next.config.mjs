@@ -1,5 +1,5 @@
 /** @type {import('next').NextConfig} */
-export default {
+const nextConfig = {
   // The Python API lives in /api at the root and handles everything under
   // /api/py/*. This rewrite points that whole prefix at the single FastAPI
   // function.
@@ -18,3 +18,5 @@ export default {
     ];
   },
 };
+
+export default nextConfig;

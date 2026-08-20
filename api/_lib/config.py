@@ -16,7 +16,7 @@ import os
 # Bumped with every packaged build. Shown on /health and the dashboard so
 # "which build is actually live" is a fact you can read, not a guess — an
 # ambiguity that has cost real debugging time in this project.
-APP_VERSION = "2026-08-20.2"
+APP_VERSION = "2026-08-20.3"
 
 
 def _clean_secret(value):
@@ -98,6 +98,33 @@ CRON_SECRET = os.environ.get("CRON_SECRET", "")
 # can reach the public URL can hand the automation a payload. Set it, then
 # re-run setup step 4 so the registration picks it up.
 WEBHOOK_SECRET = _clean_secret(os.environ.get("WEBHOOK_SECRET", ""))
+
+# Stronger webhook hardening: monday signs every webhook delivery with the
+# app's Signing Secret as an HS256 JWT in the Authorization header. When this
+# is set, the webhook endpoints verify that signature and turn away anything
+# unsigned — a forged POST can no longer drive monday writes even if it knows
+# the URL and the ?hook= token. Copy it from monday's Developer Center
+# (your app → Basic Information → Signing Secret).
+MONDAY_SIGNING_SECRET = _clean_secret(os.environ.get("MONDAY_SIGNING_SECRET", ""))
+
+# The monday account's slug (https://<slug>.monday.com/…), used only to build
+# links from the dashboard straight to board rows. Optional: unset, item ids
+# render as plain text instead of links.
+MONDAY_ACCOUNT_SLUG = (os.environ.get("MONDAY_ACCOUNT_SLUG", "")
+                       .strip().strip("/").replace("https://", "")
+                       .split(".")[0])
+
+# How long the webhook delivery log and the portal-event audit trail are kept.
+# Both grow by every delivery and click forever; the daily sweep purges rows
+# older than this. 0 disables purging. The notification ledger is never
+# purged — its uniqueness IS the dedup guarantee.
+def _int_env(name, default):
+    try:
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+LOG_RETENTION_DAYS = _int_env("LOG_RETENTION_DAYS", 180)
 
 
 # Where the app is reachable from an installer's phone — used to build the
