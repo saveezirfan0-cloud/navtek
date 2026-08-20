@@ -53,9 +53,15 @@
 
 /* Dark: the same design re-derived, not inverted. The nav keeps its navy;
    surfaces go deep blue-grey; the status colours lift enough to read on
-   dark grounds. Follows the OS — the app has no theme toggle. */
+   dark grounds.
+
+   Three-state theming: the profile menu's Light/Dark/System control stamps
+   data-theme on <html> (see app/theme.tsx); System stamps nothing and the
+   media query decides. The token block therefore exists twice — once for
+   "OS says dark and the user didn't say light", once for "the user said
+   dark" — and the two MUST stay identical. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
 
     --navy: #0a1826;
@@ -99,6 +105,52 @@
     --auth-grad-end: #14304a;
     --preview: #8d3ba5;
   }
+}
+
+/* The user chose Dark, whatever the OS says. Identical to the block above. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --navy: #0a1826;
+  --navy-2: #7db4e0;
+  --ink: #e6ecf2;
+  --mid: #93a2b1;
+  --line: #26333f;
+  --bg: #0d141c;
+  --card: #16202b;
+  --red: #ef8a80;
+  --red-bg: #3a1713;
+  --red-line: #5c2a24;
+  --amber: #e0b25e;
+  --amber-bg: #33270e;
+  --amber-line: #56431c;
+  --green: #66c799;
+  --green-bg: #12301f;
+  --green-line: #235c3d;
+  --blue: #7db4e0;
+  --blue-bg: #132a3d;
+
+  --line-soft: #1d2833;
+  --line-softer: #1a242f;
+  --input-border: #35455563;
+  --soft: #1c2833;
+  --soft-2: #1d2b3a;
+  --track: #24313e;
+  --code-bg: #101a24;
+  --drop-bg: #121c26;
+  --hover-bg: #1a2836;
+  --chip-on: #d6e3ef;
+  --switch-off: #34434f;
+  --shadow: rgba(0, 0, 0, .3);
+  --hover-ink: rgba(214, 227, 239, .08);
+
+  --on-navy: #f2f6fa;
+  --on-navy-dim: #b9cddd;
+  --on-navy-kicker: #7d9cba;
+  --hot: #ff9d92;
+
+  --auth-grad-end: #14304a;
+  --preview: #8d3ba5;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -220,20 +272,158 @@ details[open] .more { display: none; }
 /* is the desk-bound half and is allowed more room.                    */
 /* ------------------------------------------------------------------ */
 
-.admin { max-width: 940px; margin: 0 auto; padding-bottom: 60px; }
+/* The staff shell: a fixed module sidebar on a desk, a top bar + drawer on a
+   phone. The installer portal (.wrap) never renders it. */
 
-.nav { background: var(--navy); color: var(--on-navy); padding: 0 20px; }
-.nav .inner { max-width: 940px; margin: 0 auto; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.nav .mark {
-  font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase;
-  color: var(--on-navy-kicker); font-weight: 600; margin-right: 18px; padding: 16px 0;
+:root { --sidebar-w: 240px; }
+
+.admin { margin-left: var(--sidebar-w); max-width: 1160px; padding-bottom: 60px; }
+
+.sidebar {
+  position: fixed; inset: 0 auto 0 0; width: var(--sidebar-w); z-index: 40;
+  display: flex; flex-direction: column;
+  background: var(--navy); color: var(--on-navy);
+  border-right: 1px solid rgba(255, 255, 255, .06);
 }
-.nav a {
-  color: var(--on-navy-dim); text-decoration: none; padding: 16px 12px; font-size: 15px;
-  font-weight: 600; border-bottom: 3px solid transparent;
+.side-brand {
+  display: flex; align-items: center; gap: 10px; padding: 16px 16px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
 }
-.nav a:hover { color: var(--on-navy); }
-.nav a[aria-current="page"] { color: var(--on-navy); border-bottom-color: var(--on-navy-kicker); }
+.side-logo {
+  width: 30px; height: 30px; border-radius: 8px; flex: 0 0 auto;
+  background: linear-gradient(150deg, #2a5580, #1b3d5f);
+  color: #fff; font-weight: 750; font-size: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.side-name { display: block; font-size: 15px; font-weight: 700; line-height: 1.2; }
+.side-sub {
+  display: block; font-size: 11px; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--on-navy-kicker); font-weight: 600; margin-top: 1px;
+}
+
+.side-nav { flex: 1; overflow-y: auto; padding: 10px 10px 12px; }
+.side-group { margin-bottom: 14px; }
+.side-label {
+  font-size: 10.5px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--on-navy-kicker); font-weight: 700; padding: 8px 8px 5px;
+}
+.side-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; margin: 1px 0; border-radius: 8px;
+  color: var(--on-navy-dim); text-decoration: none;
+  font-size: 14px; font-weight: 600;
+}
+.side-link:hover { color: var(--on-navy); background: rgba(255, 255, 255, .07); }
+.side-link[aria-current="page"] {
+  color: var(--on-navy); background: rgba(255, 255, 255, .12);
+}
+.side-ico { width: 17px; height: 17px; flex: 0 0 auto; opacity: .85; }
+
+/* -- the profile rail at the bottom of the sidebar ------------------------- */
+.side-foot {
+  position: relative; padding: 10px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+}
+.profile-btn {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: none; border: 0; border-radius: 10px; padding: 8px;
+  color: var(--on-navy); font-family: inherit; cursor: pointer; text-align: left;
+}
+.profile-btn:hover { background: rgba(255, 255, 255, .08); }
+.avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex: 0 0 auto;
+  background: rgba(255, 255, 255, .16); color: #fff;
+  font-size: 12.5px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.profile-meta { flex: 1; min-width: 0; }
+.profile-name {
+  display: block; font-size: 13.5px; font-weight: 650; line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.profile-email {
+  display: block; font-size: 11.5px; color: var(--on-navy-kicker);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chev { width: 14px; height: 14px; flex: 0 0 auto; color: var(--on-navy-kicker); }
+
+.profile-menu {
+  position: absolute; left: 10px; right: 10px; bottom: calc(100% + 6px);
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .3);
+  padding: 6px; z-index: 60;
+}
+.pm-who { padding: 8px 10px 10px; border-bottom: 1px solid var(--line-soft); }
+.pm-name { font-size: 14px; font-weight: 700; }
+.pm-email { font-size: 12.5px; color: var(--mid); word-break: break-all; }
+.pm-role {
+  display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 700;
+  letter-spacing: .6px; text-transform: uppercase; color: var(--blue);
+  background: var(--blue-bg); border-radius: 20px; padding: 2px 8px;
+}
+.pm-sect {
+  font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--mid); font-weight: 700; padding: 10px 10px 4px;
+}
+.pm-row { padding: 0 10px 8px; }
+.pm-split { border-top: 1px solid var(--line-soft); margin: 4px 0; }
+.pm-item {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px;
+  font-weight: 600; color: var(--ink); cursor: pointer; text-decoration: none;
+}
+.pm-item:hover { background: var(--hover-ink); }
+.pm-out { color: var(--red); }
+
+/* -- the appearance control (profile menu + /settings) --------------------- */
+.theme-seg {
+  display: inline-flex; gap: 2px; background: var(--soft);
+  border: 1px solid var(--line); border-radius: 10px; padding: 3px;
+}
+.theme-seg.compact { display: flex; }
+.theme-seg.compact .theme-opt { flex: 1; }
+.theme-opt {
+  border: 0; background: none; border-radius: 7px; padding: 6px 12px;
+  font: inherit; font-size: 13px; font-weight: 650; color: var(--mid);
+  cursor: pointer;
+}
+.theme-opt:hover { color: var(--ink); }
+.theme-opt.on {
+  background: var(--card); color: var(--ink);
+  box-shadow: 0 1px 3px var(--shadow); border: 1px solid var(--line);
+  padding: 5px 11px;
+}
+
+/* -- the phone top bar + drawer -------------------------------------------- */
+.topbar {
+  display: none; position: sticky; top: 0; z-index: 45;
+  align-items: center; gap: 10px; padding: 10px 14px;
+  background: var(--navy); color: var(--on-navy);
+}
+.topbar-brand {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 700;
+}
+.burger {
+  width: 36px; height: 36px; border: 0; border-radius: 8px;
+  background: rgba(255, 255, 255, .1); color: var(--on-navy); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.burger svg { width: 20px; height: 20px; }
+.scrim {
+  position: fixed; inset: 0; z-index: 39; background: rgba(8, 16, 26, .55);
+}
+
+@media (max-width: 900px) {
+  .admin { margin-left: 0; }
+  .topbar { display: flex; }
+  .sidebar {
+    transform: translateX(-100%); transition: transform .18s ease;
+    box-shadow: none; width: min(300px, 84vw);
+  }
+  .sidebar.open { transform: translateX(0); box-shadow: 0 0 40px rgba(0, 0, 0, .4); }
+}
 
 .head { padding: 26px 20px 6px; }
 .head h1 { font-size: 26px; margin: 0; font-weight: 650; }
@@ -320,10 +510,15 @@ pre.out.err { background: var(--red-bg); border-color: var(--red-line); }
   padding: 24px 16px;
   background: linear-gradient(160deg, var(--navy) 0%, var(--navy-2) 55%, var(--auth-grad-end) 100%);
 }
+/* --navy-2 doubles as the dark scheme's accent (a light blue), which would
+   wash the gradient out — keep the shell deep. Both dark routes. */
 @media (prefers-color-scheme: dark) {
-  /* --navy-2 doubles as the dark scheme's accent (a light blue), which would
-     wash the gradient out — keep the shell deep. */
-  .auth-shell { background: linear-gradient(160deg, #0a1826 0%, #14304a 100%); }
+  :root:not([data-theme="light"]) .auth-shell {
+    background: linear-gradient(160deg, #0a1826 0%, #14304a 100%);
+  }
+}
+:root[data-theme="dark"] .auth-shell {
+  background: linear-gradient(160deg, #0a1826 0%, #14304a 100%);
 }
 .auth-card {
   background: var(--card); border-radius: 16px; padding: 28px 26px 20px;
@@ -347,15 +542,6 @@ pre.out.err { background: var(--red-bg); border-color: var(--red-line); }
 .lbl { display: block; font-size: 13.5px; font-weight: 650; margin: 0 0 5px; }
 .lbl .hint { color: var(--mid); font-weight: 400; }
 .lbl .field { margin-top: 5px; }
-
-.nav-user { margin-left: auto; display: flex; align-items: center; gap: 10px; padding: 8px 0; }
-.nav-name { color: var(--on-navy-dim); font-size: 14px; font-weight: 600; }
-.nav-out {
-  background: rgba(255, 255, 255, .12); color: var(--on-navy); border: 0; border-radius: 8px;
-  padding: 7px 12px; font-size: 13.5px; font-weight: 650; cursor: pointer;
-  font-family: inherit;
-}
-.nav-out:hover { background: rgba(255, 255, 255, .2); }
 
 .linklike {
   background: none; border: 0; padding: 0; color: var(--navy-2);
@@ -419,8 +605,12 @@ pre.out.err { background: var(--red-bg); border-color: var(--red-line); }
    mistake it for their own session. */
 .preview-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-left: var(--sidebar-w);
   padding: 9px 22px; font-size: 14.5px; font-weight: 600;
   background: var(--preview); color: #fff;
+}
+@media (max-width: 900px) {
+  .preview-bar { margin-left: 0; }
 }
 .preview-bar b { font-weight: 800; }
 .preview-exit {
@@ -430,7 +620,7 @@ pre.out.err { background: var(--red-bg); border-color: var(--red-line); }
   padding: 4px 12px; cursor: pointer;
 }
 .preview-exit:hover { background: rgba(255, 255, 255, .28); }
-.wrap .preview-bar { border-radius: 10px; margin-bottom: 14px; }
+.wrap .preview-bar { border-radius: 10px; margin: 0 0 14px; }
 
 .btn-ghost {
   border: 1px solid var(--line); border-radius: 7px;

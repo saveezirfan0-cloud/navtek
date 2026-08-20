@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import Body, Cookie, FastAPI, Header, HTTPException, Query, Request  # noqa: E402
 from fastapi.responses import JSONResponse, RedirectResponse  # noqa: E402
 
-from _lib import bootstrap, columns as columns_mod, config, notify, portal, sla, users  # noqa: E402
+from _lib import bootstrap, columns as columns_mod, config, emailer, notify, portal, sla, users  # noqa: E402
 from _lib.ingest import handle_webhook  # noqa: E402
 from _lib.monday import Monday, MondayError  # noqa: E402
 from _lib.store import Store  # noqa: E402
@@ -708,6 +708,86 @@ def users_update(
     if fields.get("active") is False or "password_hash" in fields:
         store.delete_user_sessions(user_id)
     return {"user": users.public_user(row)}
+
+
+# -- workspace settings (admin) -----------------------------------------------
+#
+# Non-secret, admin-editable values behind /settings — today, who hears about
+# ⚠️ Check and ❌ Failed reads by email. Secrets stay environment variables.
+
+@app.get("/api/py/settings")
+def settings_get(
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    _authorise(x_portal_secret)
+    store = Store()
+    _require_admin(_session_user(store, x_session))
+    return {
+        "notifications": emailer.notification_settings(store),
+        "email": {
+            "provider": emailer.provider(),
+            "from": emailer.sender_address() or None,
+        },
+    }
+
+
+@app.post("/api/py/settings")
+def settings_save(
+    body: dict = Body(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    _authorise(x_portal_secret)
+    store = Store()
+    me = _session_user(store, x_session)
+    _require_admin(me)
+    _db_or_503(store)
+
+    incoming = body.get("notifications")
+    if not isinstance(incoming, dict):
+        raise HTTPException(400, "Nothing to save.")
+    value = {
+        "emails": emailer.clean_emails(incoming.get("emails")),
+        "notify_check": bool(incoming.get("notify_check", True)),
+        "notify_failed": bool(incoming.get("notify_failed", True)),
+    }
+    saved = store.save_setting(emailer.SETTINGS_KEY, value, updated_by=me.get("email"))
+    if not saved:
+        raise HTTPException(
+            503,
+            f"Could not save — {store.degraded or 'database write failed'}. "
+            "If the app_settings table is missing, run "
+            "supabase/migrations/0007_app_settings.sql.",
+        )
+    store.record_event(0, "settings_changed",
+                       payload={"key": emailer.SETTINGS_KEY, "by": me.get("email")})
+    return {"notifications": emailer.notification_settings(store)}
+
+
+@app.post("/api/py/settings/test-email")
+def settings_test_email(
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """Send a test to the saved recipients, so "will this reach us" is a
+    button, not a production incident. Reports the provider's answer."""
+    _authorise(x_portal_secret)
+    store = Store()
+    me = _session_user(store, x_session)
+    _require_admin(me)
+    settings = emailer.notification_settings(store)
+    if not settings["emails"]:
+        raise HTTPException(400, "Add at least one notification email first.")
+    result = emailer.send_email(
+        settings["emails"],
+        "Test — Navtek eOrder notifications",
+        "<p>This is a test from the Navtek eOrder dashboard. "
+        "Alerts about ⚠️ Check and ❌ Failed reads will arrive like this.</p>"
+        f"<p style='color:#5b6875;font-size:13px'>Requested by {me.get('email')}.</p>",
+        "This is a test from the Navtek eOrder dashboard.",
+    )
+    return {"sent": bool(result.get("ok")), "to": settings["emails"], **result}
 
 
 # -- previewing a user (admin) ------------------------------------------------

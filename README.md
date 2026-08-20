@@ -101,6 +101,7 @@ the contract is what to check first if output looks thin.
 | `/try` | Drop an eOrder in, see what the parser reads. Writes nothing. Needs **Orders** access. |
 | `/portal` | The installer portal for a **logged-in** installer user — their linked account's jobs. |
 | `/users` | Who can sign in and what each login sees. Admin only. |
+| `/settings` | Workspace settings — appearance (light/dark/system, per browser) for everyone; the ⚠️ Check / ❌ Failed alert-email recipients for admins. |
 | `/setup` | Board setup. Admin only, plus `SETUP_KEY` for the board-changing steps. |
 | `/installers` | Accounts and their magic links. Admin only. |
 | `/j/[token]` | The installer portal via magic link — no login, the link is the password |
@@ -113,6 +114,7 @@ the contract is what to check first if output looks thin.
 | `/api/py/webhooks` | the delivery log, paginated (`limit`/`offset`/`outcome`/`q`) |
 | `/api/py/order` | one item's full history: reads with parses, deliveries |
 | `/api/py/sla/preview` | what the SLA engine sees, read-only (admin session) |
+| `/api/py/settings` | GET/POST the workspace settings; `/settings/test-email` sends a test (admin session) |
 | `/api/py/health` | What's configured and what isn't — including the SLA engine's mode |
 
 ### Logins and access
@@ -249,6 +251,7 @@ without clobbering existing monday values.
 | `MONDAY_SIGNING_SECRET` | monday app → Basic Information → Signing Secret. Set it and the webhook endpoints verify monday's JWT signature; unsigned posts are turned away. Unset, /health carries a warning. |
 | `LOG_RETENTION_DAYS` | How long `webhook_log` and `portal_events` are kept (default 180; 0 = keep forever). Purged by the daily sweep. The notification ledger is never purged — its uniqueness IS the dedup. |
 | `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` | Set all three and `sms.py` sends real texts through Twilio (`TWILIO_MESSAGING_SERVICE_SID` works in place of `TWILIO_FROM`). Unset, the logging stub runs. |
+| `RESEND_API_KEY` + `EMAIL_FROM` | Set both and `emailer.py` sends the ⚠️ Check / ❌ Failed alert emails through Resend, to the recipients saved on `/settings` (`supabase/migrations/0007_app_settings.sql`). `SMTP_HOST` (+ `SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`) with `EMAIL_FROM` sends over SMTP instead. Unset, the logging stub runs. One email per (order, file, status) — claimed in the notifications ledger, so retry storms can't flood an inbox. |
 
 ---
 
