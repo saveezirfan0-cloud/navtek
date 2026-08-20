@@ -33,7 +33,7 @@ export default function Nav({
   }
   if (user.is_admin) {
     links.push(["/installers", "Installers"], ["/users", "Users"],
-               ["/activity", "Activity"], ["/setup", "Setup"]);
+               ["/sla", "SLA"], ["/activity", "Activity"], ["/setup", "Setup"]);
   }
   return (
     <>

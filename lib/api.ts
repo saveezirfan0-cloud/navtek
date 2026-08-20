@@ -143,6 +143,16 @@ export type Health = {
   orders_board: number;
   write_order_type: boolean;
   allow_duplicate_files?: boolean;
+  /** The monday account's slug, when configured — item ids render as links
+   * into the board only when this is set. */
+  monday_slug?: string | null;
+  log_retention_days?: number;
+  sla?: {
+    go_live_date: string | null;
+    business_days: number;
+    notifications_enabled: boolean;
+    mode: string;
+  };
 };
 
 export async function getHealth(): Promise<Health | null> {
@@ -169,25 +179,57 @@ export type WebhookRun = {
   created_at: string;
 };
 
-export async function getRecent(): Promise<{
+export type RecentPage = {
   enabled: boolean;
   ingests: Ingest[];
+  total: number;
+  /** Whole-ledger counts by status, independent of the current filter. */
+  counts: { read?: number; check?: number; failed?: number };
   database?: DbState;
-}> {
+};
+
+/** One page of the read ledger. status and q filter server side, so a search
+ * covers the whole history — not just the rows that happen to be loaded. */
+export async function getRecent(
+  opts: { limit?: number; offset?: number; status?: string; q?: string } = {},
+): Promise<RecentPage> {
+  const params = new URLSearchParams({
+    limit: String(opts.limit ?? 50),
+    offset: String(opts.offset ?? 0),
+  });
+  if (opts.status) params.set("status", opts.status);
+  if (opts.q) params.set("q", opts.q);
   try {
-    return await call("/recent?limit=50");
+    return await call(`/recent?${params}`);
   } catch (error) {
     // The request itself failed — say so, rather than reporting it as an
     // unconfigured database, which sends people to check the wrong thing.
     return {
       enabled: false,
       ingests: [],
+      total: 0,
+      counts: {},
       database: {
         ok: false,
         state: "unreachable",
         detail: error instanceof Error ? error.message : "unknown error",
       },
     };
+  }
+}
+
+/** Everything recorded about one order: every read (with the full parse) and
+ * every webhook delivery. Null only when the request itself failed. */
+export async function getOrderDetail(itemId: string): Promise<{
+  enabled: boolean;
+  ingests: (Ingest & { parsed: Record<string, unknown> })[];
+  webhooks: WebhookRun[];
+  database?: DbState;
+} | null> {
+  try {
+    return await call(`/order?item_id=${encodeURIComponent(itemId)}`);
+  } catch {
+    return null;
   }
 }
 
@@ -200,13 +242,21 @@ export type WebhookLog = {
 };
 
 /** One page of the webhook delivery log, newest first. `total` counts the
- * whole log, not the page — the Deliveries tab derives its pager from it. */
+ * whole (filtered) log, not the page — the Deliveries tab derives its pager
+ * from it. outcome and q filter server side. */
 export async function getWebhookLog(
   limit: number,
   offset: number,
+  opts: { outcome?: string; q?: string } = {},
 ): Promise<WebhookLog> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (opts.outcome) params.set("outcome", opts.outcome);
+  if (opts.q) params.set("q", opts.q);
   try {
-    return await call(`/webhooks?limit=${limit}&offset=${offset}`);
+    return await call(`/webhooks?${params}`);
   } catch (error) {
     return {
       enabled: false,
@@ -335,13 +385,61 @@ export type LedgerEntry = {
   sent_at: string;
 };
 
-export async function getActivity(session: string): Promise<{
+export type ActivityPage = {
+  page_size: number;
   events: ActivityEvent[];
-  unknown_order_reasons: UnknownReason[];
+  events_total: number;
   notifications: LedgerEntry[];
-} | null> {
+  notifications_total: number;
+  unknown_order_reasons: UnknownReason[];
+  reasons_total: number;
+};
+
+/** The audit trail, one page per table — each table pages independently. */
+export async function getActivity(
+  session: string,
+  offsets: { events?: number; notifications?: number; reasons?: number } = {},
+): Promise<ActivityPage | null> {
+  const params = new URLSearchParams({
+    events_offset: String(offsets.events ?? 0),
+    notifications_offset: String(offsets.notifications ?? 0),
+    reasons_offset: String(offsets.reasons ?? 0),
+  });
   try {
-    return await call("/activity", { headers: { "X-Session": session } });
+    return await call(`/activity?${params}`, { headers: { "X-Session": session } });
+  } catch {
+    return null;
+  }
+}
+
+// -- the SLA console (admin) -------------------------------------------------
+
+export type SlaJob = {
+  item_id: string;
+  customer: string | null;
+  account: string;
+  state: string;
+  dispatched: string;
+  clock_start: string;
+  sla_age_business_days: number;
+  days_left: number;
+  status: "breached" | "due_now" | "on_track";
+};
+
+export type SlaPreview = {
+  mode: "off" | "shadow" | "live";
+  go_live: string | null;
+  sla_business_days: number;
+  notifications_enabled: boolean;
+  jobs_checked: number;
+  jobs: SlaJob[];
+  ledger: LedgerEntry[];
+};
+
+/** What the SLA engine sees right now — read only, writes nothing. */
+export async function getSlaPreview(session: string): Promise<SlaPreview | null> {
+  try {
+    return await call("/sla/preview", { headers: { "X-Session": session } });
   } catch {
     return null;
   }

@@ -15,3 +15,7 @@ node_modules/
 
 # TypeScript incremental build state
 tsconfig.tsbuildinfo
+
+# Playwright
+playwright-report/
+test-results/

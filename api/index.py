@@ -99,7 +99,15 @@ def health(fresh: bool = Query(default=False)):
         },
         "ok": not config.missing_secrets() and not config.CONFIG_WARNINGS,
         "missing_secrets": config.missing_secrets(),
-        "config_warnings": config.CONFIG_WARNINGS,
+        # Import-time warnings, plus posture the environment decides at run
+        # time: with neither webhook lock set, anyone who finds the URL can
+        # hand the automation a payload — worth a banner, not a silent default.
+        "config_warnings": config.CONFIG_WARNINGS + (
+            [] if (config.WEBHOOK_SECRET or config.MONDAY_SIGNING_SECRET) else
+            ["The webhook endpoints accept unauthenticated calls. Set "
+             "MONDAY_SIGNING_SECRET (monday app → Basic Information → Signing "
+             "Secret) so only monday can drive them."]
+        ),
         "database": Store().ping(),
         "unmapped_columns": columns_mod.unmapped(cols),
         "unmapped_optional": columns_mod.unmapped_optional(cols),
@@ -109,6 +117,12 @@ def health(fresh: bool = Query(default=False)):
         "installers_board": config.INSTALLERS_BOARD_ID,
         "write_order_type": config.WRITE_ORDER_TYPE,
         "allow_duplicate_files": config.ALLOW_DUPLICATE_FILES,
+        "monday_slug": config.MONDAY_ACCOUNT_SLUG or None,
+        "log_retention_days": config.LOG_RETENTION_DAYS,
+        "webhook_hardening": {
+            "hook_token": bool(config.WEBHOOK_SECRET),
+            "signature": bool(config.MONDAY_SIGNING_SECRET),
+        },
         "sla": {
             "go_live_date": (config.sla_go_live() or None)
             and config.sla_go_live().isoformat(),
@@ -128,11 +142,49 @@ def health(fresh: bool = Query(default=False)):
 # The automation
 # --------------------------------------------------------------------------
 
-@app.post("/api/py/eorder")
-async def eorder(request: Request):
-    # When WEBHOOK_SECRET is set, the registered URL carries it as ?hook=… and
-    # anything without it is turned away — this endpoint is reachable from the
-    # open internet and drives writes with the account-wide monday token.
+def _monday_signature_ok(authorization):
+    """Verify monday's webhook signature — an HS256 JWT in Authorization.
+
+    Hand-rolled HMAC over header.payload rather than a JWT library: the only
+    claim that matters is "monday's signing secret produced this", and a
+    dependency-free check keeps the serverless bundle where store.py's
+    reasoning already put it. Claims (exp and friends) are deliberately not
+    read — monday's tokens are per-delivery and short-lived, and rejecting a
+    clock-skewed but genuinely signed delivery would drop real orders.
+    """
+    import base64
+    import hashlib
+    import hmac as _hmac
+
+    token = (authorization or "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    parts = token.split(".")
+    if len(parts) != 3 or not all(parts):
+        return False
+    expected = _hmac.new(config.MONDAY_SIGNING_SECRET.encode(),
+                         f"{parts[0]}.{parts[1]}".encode(), hashlib.sha256).digest()
+    try:
+        got = base64.urlsafe_b64decode(parts[2] + "=" * (-len(parts[2]) % 4))
+    except Exception:  # noqa: BLE001 - malformed padding is just "no"
+        return False
+    return _hmac.compare_digest(expected, got)
+
+
+def _webhook_guard(request):
+    """The webhook endpoints are reachable from the open internet and drive
+    monday writes with the account-wide token, so two independent locks:
+
+    * WEBHOOK_SECRET — the registered URL carries it as ?hook=…; anything
+      without it is turned away.
+    * MONDAY_SIGNING_SECRET — monday signs every delivery (challenge
+      handshake included) as a JWT in Authorization; with the secret set,
+      an unsigned or mis-signed POST is turned away even if it knows the
+      URL and the ?hook= token.
+
+    Neither set means the endpoints run open, which /health reports as a
+    warning rather than silently accepting.
+    """
     if config.WEBHOOK_SECRET:
         import hmac as _hmac
 
@@ -140,6 +192,14 @@ async def eorder(request: Request):
             request.query_params.get("hook", ""), config.WEBHOOK_SECRET
         ):
             raise HTTPException(401, "bad webhook token")
+    if config.MONDAY_SIGNING_SECRET:
+        if not _monday_signature_ok(request.headers.get("authorization", "")):
+            raise HTTPException(401, "bad webhook signature")
+
+
+@app.post("/api/py/eorder")
+async def eorder(request: Request):
+    _webhook_guard(request)
 
     payload = await request.json()
 
@@ -178,18 +238,6 @@ async def parse_endpoint(request: Request):
 # --------------------------------------------------------------------------
 # Installer-flow webhooks and crons
 # --------------------------------------------------------------------------
-
-def _webhook_guard(request):
-    """Same ?hook= check as /eorder — these endpoints are public and drive
-    monday writes, so with WEBHOOK_SECRET set nothing without it gets in."""
-    if config.WEBHOOK_SECRET:
-        import hmac as _hmac
-
-        if not _hmac.compare_digest(
-            request.query_params.get("hook", ""), config.WEBHOOK_SECRET
-        ):
-            raise HTTPException(401, "bad webhook token")
-
 
 @app.post("/api/py/installer-change")
 async def installer_change(request: Request):
@@ -261,9 +309,34 @@ def sla_sweep(
     authorization: str = Header(default=""),
 ):
     """The daily SLA pass. Refuses to run without SLA_GO_LIVE_DATE; sends
-    nothing while SLA_NOTIFICATIONS_ENABLED is false (shadow mode)."""
+    nothing while SLA_NOTIFICATIONS_ENABLED is false (shadow mode). The
+    retention purge rides the same daily schedule — and runs even when the
+    sweep itself refuses, so an unconfigured SLA engine doesn't also mean
+    logs that grow forever."""
     _cron_authorise(x_portal_secret, authorization)
-    return sla.sweep(Monday(), Store())
+    result = sla.sweep(Monday(), Store())
+    result["retention"] = Store().purge_logs(config.LOG_RETENTION_DAYS)
+    return result
+
+
+@app.get("/api/py/sla/preview")
+def sla_preview(
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """The SLA console's one call — read-only, admin only.
+
+    What the engine sees right now: every job inside its window with its
+    clock and countdown, plus the recent ledger. Writes nothing — no claims,
+    no events — so the console can refresh freely without consuming the
+    dedup keys the real sweep depends on.
+    """
+    _authorise(x_portal_secret)
+    store = Store()
+    _require_admin(_session_user(store, x_session))
+    result = sla.preview(Monday(), Store())
+    result["ledger"] = store.recent_notifications(30)
+    return result
 
 
 @app.post("/api/py/portal/resync")
@@ -842,19 +915,33 @@ def setup_webhook(body: dict = Body(default={}), x_setup_key: str = Header(defau
 
 @app.get("/api/py/activity")
 def activity(
+    events_offset: int = Query(default=0),
+    notifications_offset: int = Query(default=0),
+    reasons_offset: int = Query(default=0),
     x_portal_secret: str = Header(default=""),
     x_session: str = Header(default=""),
 ):
     """The audit trail, for admins: portal events (views, write-backs, failed
-    logins, SLA breaches) and unrecognised order reasons. The data was always
-    collected; this is the first window onto it."""
+    logins, SLA breaches) and unrecognised order reasons. Each table pages
+    independently — they used to cap at their newest rows with no way back."""
     _authorise(x_portal_secret)
     store = Store()
     _require_admin(_session_user(store, x_session))
+    page = 50
+    events, events_total = store.events_page(
+        page, max(0, events_offset))
+    notifications, notifications_total = store.notifications_page(
+        page, max(0, notifications_offset))
+    reasons, reasons_total = store.reasons_page(
+        page, max(0, reasons_offset))
     return {
-        "events": store.recent_events(150),
-        "unknown_order_reasons": store.recent_unknown_reasons(50),
-        "notifications": store.recent_notifications(50),
+        "page_size": page,
+        "events": events,
+        "events_total": events_total,
+        "notifications": notifications,
+        "notifications_total": notifications_total,
+        "unknown_order_reasons": reasons,
+        "reasons_total": reasons_total,
     }
 
 
@@ -943,45 +1030,91 @@ def selftest(x_setup_key: str = Header(default="")):
     return {"ok": not blocking, "verdict": verdict, "checks": checks}
 
 
+def _ingest_row(r):
+    return {
+        "monday_item_id": r.get("monday_item_id"),
+        "opportunity_id": r.get("opportunity_id"),
+        "file_name": r.get("file_name"),
+        "status": r.get("status"),
+        "warnings": r.get("warnings") or [],
+        "changed_fields": r.get("changed_fields") or [],
+        "error": r.get("error"),
+        "duration_ms": r.get("duration_ms"),
+        "created_at": r.get("created_at"),
+        "item_name": (r.get("parsed") or {}).get("derived_item_name"),
+    }
+
+
 @app.get("/api/py/recent")
-def recent(limit: int = Query(default=20), x_portal_secret: str = Header(default="")):
-    """Recent eOrder reads, for the dashboard. No secrets — but customer names,
-    order IDs and file names ARE business data, so only the app's own server
-    (which holds the shared secret and sits behind the login) may ask."""
+def recent(
+    limit: int = Query(default=20),
+    offset: int = Query(default=0),
+    status: str = Query(default=""),
+    q: str = Query(default=""),
+    x_portal_secret: str = Header(default=""),
+):
+    """The read ledger, for the dashboard — paginated and searchable server
+    side, so a search covers the whole history rather than the loaded page.
+    No secrets — but customer names, order IDs and file names ARE business
+    data, so only the app's own server (which holds the shared secret and
+    sits behind the login) may ask."""
     _authorise(x_portal_secret)
     store = Store()
     if not store.enabled:
-        return {"enabled": False, "ingests": [], "database": store.ping()}
-    try:
-        # Straight to the query — the old ping-first pattern doubled the
-        # database round trips on every dashboard load. ping() now runs only
-        # to DIAGNOSE a failure (and _send has already tried the fallback
-        # credential pair by then).
-        rows = store.recent_ingests(min(limit, 50))
-    except Exception as exc:  # noqa: BLE001
-        return {"enabled": False, "ingests": [],
-                "database": {"ok": False, "state": "error",
-                             "detail": f"{type(exc).__name__}: {exc}"}}
+        return {"enabled": False, "ingests": [], "total": 0, "counts": {},
+                "database": store.ping()}
+
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    status = status if status in ("read", "check", "failed") else None
+    rows, total = store.ingest_page(limit, offset, status=status, q=q)
     if store.degraded:
-        return {"enabled": False, "ingests": [], "database": store.ping()}
+        return {"enabled": False, "ingests": [], "total": 0, "counts": {},
+                "database": store.ping()}
 
     return {
         "enabled": True,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        # Whole-ledger counts, not counts of the visible page — "2 failed"
+        # should mean two failures, full stop.
+        "counts": store.ingest_counts(),
+        "ingests": [_ingest_row(r) for r in rows],
+    }
+
+
+@app.get("/api/py/order")
+def order_detail(item_id: int = Query(...), x_portal_secret: str = Header(default="")):
+    """Everything recorded about one order: every read (with the full parse,
+    warnings and change history) and every webhook delivery. The order detail
+    page's one call. Same audience and guard as /recent."""
+    _authorise(x_portal_secret)
+    store = Store()
+    if not store.enabled:
+        return {"enabled": False, "ingests": [], "webhooks": [],
+                "database": store.ping()}
+    ingests = store.order_ingests(item_id)
+    return {
+        "enabled": True,
         "ingests": [
-            {
-                "monday_item_id": r.get("monday_item_id"),
-                "opportunity_id": r.get("opportunity_id"),
-                "file_name": r.get("file_name"),
-                "status": r.get("status"),
-                "warnings": r.get("warnings") or [],
-                "changed_fields": r.get("changed_fields") or [],
-                "error": r.get("error"),
-                "duration_ms": r.get("duration_ms"),
-                "created_at": r.get("created_at"),
-                "item_name": (r.get("parsed") or {}).get("derived_item_name"),
-            }
-            for r in rows
+            {**_ingest_row(r), "parsed": r.get("parsed") or {}}
+            for r in ingests
         ],
+        "webhooks": [_webhook_row(h) for h in store.order_webhooks(item_id)],
+    }
+
+
+def _webhook_row(h):
+    return {
+        "monday_item_id": h.get("monday_item_id"),
+        "opportunity_id": h.get("opportunity_id"),
+        "file_name": h.get("file_name"),
+        "outcome": h.get("outcome"),
+        "reason": h.get("reason"),
+        "status": h.get("status"),
+        "duration_ms": h.get("duration_ms"),
+        "created_at": h.get("created_at"),
     }
 
 
@@ -989,6 +1122,8 @@ def recent(limit: int = Query(default=20), x_portal_secret: str = Header(default
 def webhook_deliveries(
     limit: int = Query(default=25),
     offset: int = Query(default=0),
+    outcome: str = Query(default=""),
+    q: str = Query(default=""),
     x_portal_secret: str = Header(default=""),
 ):
     """The webhook delivery log, paginated — every call monday made, including
@@ -1008,7 +1143,8 @@ def webhook_deliveries(
 
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
-    hooks, total = store.webhook_page(limit, offset)
+    outcome = outcome if outcome in ("processed", "skipped", "failed") else None
+    hooks, total = store.webhook_page(limit, offset, outcome=outcome, q=q)
 
     # Only a 404 means "table not there yet". Anything else — bad key,
     # network — is the database misbehaving, and saying "run the migration"
@@ -1025,19 +1161,7 @@ def webhook_deliveries(
         "total": total,
         "limit": limit,
         "offset": offset,
-        "webhooks": [
-            {
-                "monday_item_id": h.get("monday_item_id"),
-                "opportunity_id": h.get("opportunity_id"),
-                "file_name": h.get("file_name"),
-                "outcome": h.get("outcome"),
-                "reason": h.get("reason"),
-                "status": h.get("status"),
-                "duration_ms": h.get("duration_ms"),
-                "created_at": h.get("created_at"),
-            }
-            for h in hooks
-        ],
+        "webhooks": [_webhook_row(h) for h in hooks],
     }
 
 

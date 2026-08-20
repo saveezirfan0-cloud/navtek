@@ -4,6 +4,17 @@ Written after the Deliveries tab shipped (webhook log moved off the dashboard,
 paginated server side). This is the considered answer to "what should this app
 do next" across features, layout, UI, and the stack itself.
 
+> **Status: executed, same branch.** Everything below that code could deliver
+> has shipped — CI, lint, the smoke test, server-side pagination + search on
+> Deliveries / Orders / Activity, monday deep links, the `/orders/[item]`
+> detail page, the `/sla` console, Twilio support in `sms.py`, webhook
+> signature verification, log retention, dark mode, responsive card tables,
+> and saved-toasts on `/users`. The exceptions need the business, not code:
+> the Order Type source, the missing Upsell sample, and the two absent sample
+> files (Phase 2, item 6) — plus flipping the new switches
+> (`MONDAY_SIGNING_SECRET`, `MONDAY_ACCOUNT_SLUG`, `TWILIO_*`,
+> `SLA_GO_LIVE_DATE`) in Vercel, which is configuration, not a deploy.
+
 ## Where the app stands
 
 - **Stack.** Next.js 16 (App Router, server components) with hand-rolled CSS

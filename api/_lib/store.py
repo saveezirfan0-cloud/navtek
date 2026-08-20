@@ -126,6 +126,46 @@ class Store:
             self.degraded = f"{type(exc).__name__} reading {table}"
             return []
 
+    def _get_page(self, table, params):
+        """Read one page plus the exact total, and never raise.
+
+        The total comes back in PostgREST's Content-Range header when asked
+        for with `Prefer: count=exact` — one round trip, not a second query.
+        Same never-raise contract as _get: a failure is ([], 0) and degraded.
+        """
+        if not self.enabled:
+            return [], 0
+        try:
+            response = self._send(lambda: self._client.get(
+                f"{self.url}/rest/v1/{table}", params=params,
+                headers=self._headers("count=exact"),
+            ))
+            if response.status_code >= 400:
+                self.degraded = f"HTTP {response.status_code} reading {table}"
+                return [], 0
+            # Content-Range looks like "0-24/137"; after the slash is the
+            # exact total, or "*" if the database declined to count.
+            total_text = response.headers.get("content-range", "").rpartition("/")[2]
+            total = int(total_text) if total_text.isdigit() else 0
+            return response.json(), total
+        except Exception as exc:  # noqa: BLE001
+            self.degraded = f"{type(exc).__name__} reading {table}"
+            return [], 0
+
+    @staticmethod
+    def _search_pattern(q):
+        """An ilike pattern safe to embed in PostgREST's or=(…) list.
+
+        Commas and parentheses are that list's own syntax, so a search term
+        containing them would truncate the filter; they become spaces rather
+        than an error, since "close enough results" beats a 400 mid-search.
+        """
+        term = (q or "").strip()
+        for ch in ",()":
+            term = term.replace(ch, " ")
+        term = " ".join(term.split())
+        return f"*{term}*" if term else ""
+
     def _post(self, table, rows, prefer="return=representation"):
         """Write, and never raise. Same reasoning as _get."""
         if not self.enabled:
@@ -418,6 +458,55 @@ class Store:
             "select": "*", "order": "created_at.desc", "limit": str(limit),
         })
 
+    def ingest_page(self, limit=20, offset=0, status=None, q=None):
+        """One page of the read ledger, newest first, plus the exact total.
+
+        status and q push the dashboard's filters into the query, so a search
+        covers the whole ledger — the old client-side filter only saw the 50
+        rows that happened to be loaded.
+        """
+        params = {"select": "*", "order": "created_at.desc",
+                  "limit": str(limit), "offset": str(offset)}
+        if status:
+            params["status"] = f"eq.{status}"
+        pattern = self._search_pattern(q)
+        if pattern:
+            params["or"] = (
+                f"(file_name.ilike.{pattern},"
+                f"opportunity_id.ilike.{pattern},"
+                f"error.ilike.{pattern},"
+                f"parsed->>derived_item_name.ilike.{pattern})"
+            )
+        return self._get_page("eorder_ingests", params)
+
+    def ingest_counts(self):
+        """How many reads ever, by status — the dashboard's stat tiles.
+
+        Three count-only queries (limit 1, exact count) rather than pulling
+        rows; the tiles used to count only the visible page, which made
+        "2 failed" mean "2 of the last 50", not two failures.
+        """
+        return {
+            status: self._get_page("eorder_ingests", {
+                "select": "created_at", "limit": "1", "status": f"eq.{status}",
+            })[1]
+            for status in ("read", "check", "failed")
+        }
+
+    def order_ingests(self, item_id):
+        """Every read recorded for one monday item, newest first."""
+        return self._get("eorder_ingests", {
+            "select": "*", "monday_item_id": f"eq.{item_id}",
+            "order": "created_at.desc", "limit": "50",
+        })
+
+    def order_webhooks(self, item_id):
+        """Every webhook delivery recorded for one monday item, newest first."""
+        return self._get("webhook_log", {
+            "select": "*", "monday_item_id": f"eq.{item_id}",
+            "order": "created_at.desc", "limit": "50",
+        })
+
     # -- webhook log ---------------------------------------------------------
     #
     # One row per webhook delivery, including the outcomes the ingest ledger
@@ -430,33 +519,24 @@ class Store:
         except httpx.HTTPError:
             return []
 
-    def webhook_page(self, limit=25, offset=0):
-        """One page of the delivery log, newest first, plus the total count.
+    def webhook_page(self, limit=25, offset=0, outcome=None, q=None):
+        """One page of the delivery log, newest first, plus the exact total.
 
-        The total comes back in PostgREST's Content-Range header when asked
-        for with `Prefer: count=exact` — one round trip, not a second query.
-        Same never-raise contract as _get: a failure is ([], 0) and degraded.
+        outcome and q are the Deliveries tab's filters, pushed into the query
+        so they narrow the whole log rather than the loaded page.
         """
-        if not self.enabled:
-            return [], 0
-        try:
-            response = self._send(lambda: self._client.get(
-                f"{self.url}/rest/v1/webhook_log",
-                params={"select": "*", "order": "created_at.desc",
-                        "limit": str(limit), "offset": str(offset)},
-                headers=self._headers("count=exact"),
-            ))
-            if response.status_code >= 400:
-                self.degraded = f"HTTP {response.status_code} reading webhook_log"
-                return [], 0
-            # Content-Range looks like "0-24/137"; the part after the slash
-            # is the exact total, or "*" if Supabase declined to count.
-            total_text = response.headers.get("content-range", "").rpartition("/")[2]
-            total = int(total_text) if total_text.isdigit() else 0
-            return response.json(), total
-        except Exception as exc:  # noqa: BLE001
-            self.degraded = f"{type(exc).__name__} reading webhook_log"
-            return [], 0
+        params = {"select": "*", "order": "created_at.desc",
+                  "limit": str(limit), "offset": str(offset)}
+        if outcome:
+            params["outcome"] = f"eq.{outcome}"
+        pattern = self._search_pattern(q)
+        if pattern:
+            params["or"] = (
+                f"(file_name.ilike.{pattern},"
+                f"opportunity_id.ilike.{pattern},"
+                f"reason.ilike.{pattern})"
+            )
+        return self._get_page("webhook_log", params)
 
     def record_unknown_order_reason(self, order_reason, opportunity_id, file_name):
         """Brief §4.1 — an unrecognised order reason silently produces no ACV."""
@@ -618,6 +698,42 @@ class Store:
         return self._get("portal_events", {
             "select": "*", "order": "created_at.desc", "limit": str(limit),
         })
+
+    def events_page(self, limit=50, offset=0):
+        return self._get_page("portal_events", {
+            "select": "*", "order": "created_at.desc",
+            "limit": str(limit), "offset": str(offset),
+        })
+
+    def notifications_page(self, limit=50, offset=0):
+        return self._get_page("notifications", {
+            "select": "*", "order": "sent_at.desc",
+            "limit": str(limit), "offset": str(offset),
+        })
+
+    def reasons_page(self, limit=50, offset=0):
+        return self._get_page("unknown_order_reasons", {
+            "select": "*", "order": "seen_at.desc",
+            "limit": str(limit), "offset": str(offset),
+        })
+
+    def purge_logs(self, days):
+        """Drop webhook_log and portal_events rows older than `days` days.
+
+        Both tables grow by every delivery and portal click forever; this is
+        the retention pass the daily sweep runs. The notifications ledger is
+        deliberately NOT here — its uniqueness is the dedup guarantee ("one
+        row per (job, kind), ever"), and purging it would let old jobs
+        re-notify.
+        """
+        if not self.enabled or not days or days <= 0:
+            return {"purged": False}
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        results = {}
+        for table in ("webhook_log", "portal_events"):
+            results[table] = self._delete(table, {"created_at": f"lt.{cutoff}"})
+        return {"purged": True, "days": days, "cutoff": cutoff, **results}
 
     def recent_unknown_reasons(self, limit=50):
         return self._get("unknown_order_reasons", {

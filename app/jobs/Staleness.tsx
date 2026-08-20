@@ -1,10 +1,23 @@
+"use client";
+
+import { useSyncExternalStore } from "react";
+
 /**
  * The staleness marker. The portal reads monday live; only when that fails
  * does it fall back to the cached list — and a stale cache must say so, out
  * loud, because a job list from three hours ago can send someone to a site
  * that was reallocated this morning. Rendered only when the backend flags the
  * data as more than an hour old.
+ *
+ * The clock is read through useSyncExternalStore, not during render —
+ * render stays pure, and the server (which has no meaningful "now" for the
+ * reader's session) legitimately renders the vague fallback until hydration.
  */
+const subscribe = () => () => {};
+let mountedAt: number | undefined;
+const nowOnClient = () => (mountedAt ??= Date.now());
+const nowOnServer = () => null;
+
 export default function Staleness({
   refreshedAt,
   stale,
@@ -12,11 +25,12 @@ export default function Staleness({
   refreshedAt?: string | null;
   stale?: boolean;
 }) {
+  const now = useSyncExternalStore(subscribe, nowOnClient, nowOnServer);
   if (!stale) return null;
 
   let when = "a while ago";
-  if (refreshedAt) {
-    const ms = Date.now() - new Date(refreshedAt).getTime();
+  if (refreshedAt && now !== null) {
+    const ms = now - new Date(refreshedAt).getTime();
     if (Number.isFinite(ms) && ms >= 0) {
       const hours = Math.floor(ms / 3_600_000);
       when =

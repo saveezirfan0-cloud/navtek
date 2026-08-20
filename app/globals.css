@@ -1,8 +1,12 @@
 /* Ported from the approved prototype (portal-gpstech.html / portal-paul.html).
-   Deliberately unchanged — the visual language was signed off; this is a port,
-   not a redesign. Anything new below is marked. */
+   The light palette is deliberately unchanged — the visual language was signed
+   off; this is a port, not a redesign. What HAS changed since the port: every
+   colour is a token on :root so the dark scheme below can re-derive the same
+   design instead of fighting hard-coded hexes. */
 
 :root {
+  color-scheme: light;
+
   --navy: #0f2740;
   --navy-2: #1b3d5f;
   --ink: #12181f;
@@ -12,12 +16,89 @@
   --card: #fff;
   --red: #c0362c;
   --red-bg: #fdecea;
+  --red-line: #eccbc7;
   --amber: #8a5a00;
   --amber-bg: #fdf3e0;
+  --amber-line: #e8d5a8;
   --green: #1a6b45;
   --green-bg: #e6f4ec;
+  --green-line: #bfe0cd;
   --blue: #1e5b8f;
   --blue-bg: #e8f1f9;
+
+  /* The supporting cast the prototype used as literals. */
+  --line-soft: #f4f6f9;      /* row separators inside tables and cards */
+  --line-softer: #f0f3f6;
+  --input-border: #c3d2df;
+  --soft: #eef1f4;           /* quiet chip/flat backgrounds */
+  --soft-2: #eaf0f7;
+  --track: #e3e8ee;          /* progress bar track */
+  --code-bg: #f6f8fa;
+  --drop-bg: #f8fafc;
+  --hover-bg: #eef4fa;
+  --chip-on: #102030;
+  --switch-off: #cdd6e0;
+  --shadow: rgba(16, 32, 48, .05);
+  --hover-ink: rgba(16, 32, 48, .06);
+
+  /* The nav and headers sit on --navy in both schemes. */
+  --on-navy: #fff;
+  --on-navy-dim: #cfe0ee;
+  --on-navy-kicker: #8fb0cc;
+  --hot: #ffb3ab;
+
+  --auth-grad-end: #2a5580;
+  --preview: #7c2d92;
+}
+
+/* Dark: the same design re-derived, not inverted. The nav keeps its navy;
+   surfaces go deep blue-grey; the status colours lift enough to read on
+   dark grounds. Follows the OS — the app has no theme toggle. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --navy: #0a1826;
+    --navy-2: #7db4e0;
+    --ink: #e6ecf2;
+    --mid: #93a2b1;
+    --line: #26333f;
+    --bg: #0d141c;
+    --card: #16202b;
+    --red: #ef8a80;
+    --red-bg: #3a1713;
+    --red-line: #5c2a24;
+    --amber: #e0b25e;
+    --amber-bg: #33270e;
+    --amber-line: #56431c;
+    --green: #66c799;
+    --green-bg: #12301f;
+    --green-line: #235c3d;
+    --blue: #7db4e0;
+    --blue-bg: #132a3d;
+
+    --line-soft: #1d2833;
+    --line-softer: #1a242f;
+    --input-border: #35455563;
+    --soft: #1c2833;
+    --soft-2: #1d2b3a;
+    --track: #24313e;
+    --code-bg: #101a24;
+    --drop-bg: #121c26;
+    --hover-bg: #1a2836;
+    --chip-on: #d6e3ef;
+    --switch-off: #34434f;
+    --shadow: rgba(0, 0, 0, .3);
+    --hover-ink: rgba(214, 227, 239, .08);
+
+    --on-navy: #f2f6fa;
+    --on-navy-dim: #b9cddd;
+    --on-navy-kicker: #7d9cba;
+    --hot: #ff9d92;
+
+    --auth-grad-end: #14304a;
+    --preview: #8d3ba5;
+  }
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -32,14 +113,14 @@ body {
 
 .wrap { max-width: 520px; margin: 0 auto; min-height: 100vh; }
 
-header { background: var(--navy); color: #fff; padding: 16px 16px 18px; }
+header { background: var(--navy); color: var(--on-navy); padding: 16px 16px 18px; }
 .brand {
   font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase;
-  color: #8fb0cc; font-weight: 600;
+  color: var(--on-navy-kicker); font-weight: 600;
 }
 .who { font-size: 22px; font-weight: 650; margin-top: 3px; }
-.summary { margin-top: 12px; font-size: 14.5px; color: #cfe0ee; }
-.hot { color: #ffb3ab; font-weight: 650; }
+.summary { margin-top: 12px; font-size: 14.5px; color: var(--on-navy-dim); }
+.hot { color: var(--hot); font-weight: 650; }
 
 .sect {
   padding: 18px 16px 6px; font-size: 12.5px; font-weight: 700;
@@ -48,7 +129,7 @@ header { background: var(--navy); color: #fff; padding: 16px 16px 18px; }
 
 .card {
   background: var(--card); margin: 0 12px 10px; border-radius: 12px;
-  border: 1px solid var(--line); box-shadow: 0 1px 2px rgba(16, 32, 48, .05);
+  border: 1px solid var(--line); box-shadow: 0 1px 2px var(--shadow);
   overflow: hidden;
 }
 summary { padding: 14px 15px; cursor: pointer; list-style: none; display: block; }
@@ -66,16 +147,16 @@ summary::-webkit-details-marker { display: none; }
 .c-amber { background: var(--amber-bg); color: var(--amber); }
 .c-green { background: var(--green-bg); color: var(--green); }
 .c-blue { background: var(--blue-bg); color: var(--blue); }
-.c-grey { background: #eef1f4; color: var(--mid); }
-.c-part { background: #eaf0f7; color: var(--navy-2); }
+.c-grey { background: var(--soft); color: var(--mid); }
+.c-part { background: var(--soft-2); color: var(--navy-2); }
 
 .more { display: block; font-size: 13px; color: var(--navy-2); font-weight: 600; margin-top: 10px; }
 details[open] .more { display: none; }
 
-.body { padding: 0 15px 15px; border-top: 1px solid #f0f3f6; }
+.body { padding: 0 15px 15px; border-top: 1px solid var(--line-softer); }
 .facts { padding: 4px 0 14px; }
 .row { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; font-size: 15px; }
-.row + .row { border-top: 1px solid #f4f6f9; }
+.row + .row { border-top: 1px solid var(--line-soft); }
 .row .k { color: var(--mid); flex: 0 0 auto; }
 .row .v { text-align: right; font-weight: 600; }
 
@@ -85,10 +166,10 @@ details[open] .more { display: none; }
   text-align: center; text-decoration: none;
   border: none; font-family: inherit; cursor: pointer;
 }
-.b-call { background: var(--green); color: #fff; }
-.b-main { background: var(--navy-2); color: #fff; }
-.b-alt { background: #fff; color: var(--navy-2); border: 1.5px solid #c3d2df; }
-.b-warn { background: #fff; color: var(--red); border: 1.5px solid #eccbc7; }
+.b-call { background: var(--green); color: var(--card); }
+.b-main { background: var(--navy-2); color: var(--card); }
+.b-alt { background: var(--card); color: var(--navy-2); border: 1.5px solid var(--input-border); }
+.b-warn { background: var(--card); color: var(--red); border: 1.5px solid var(--red-line); }
 .btn:disabled { opacity: .55; cursor: default; }
 
 .done {
@@ -97,36 +178,36 @@ details[open] .more { display: none; }
   font-size: 15.5px;
 }
 .flat {
-  background: #eef1f4; color: var(--mid); border-radius: 11px; padding: 13px;
+  background: var(--soft); color: var(--mid); border-radius: 11px; padding: 13px;
   text-align: center; font-size: 15px;
 }
 
 .prog { margin: 2px 0 12px; }
 .prog .lbl { display: flex; justify-content: space-between; font-size: 14.5px; font-weight: 650; margin-bottom: 6px; }
 .prog .lbl .sub { color: var(--mid); font-weight: 400; font-size: 13px; }
-.bar { height: 8px; border-radius: 6px; background: #e3e8ee; overflow: hidden; }
+.bar { height: 8px; border-radius: 6px; background: var(--track); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--navy-2); border-radius: 6px; }
 .bar i.full { background: var(--green); }
 
 .count { display: flex; gap: 8px; margin-bottom: 10px; }
 .count input {
-  flex: 1; padding: 14px; font-size: 16.5px; border: 1.5px solid #c3d2df;
+  flex: 1; padding: 14px; font-size: 16.5px; border: 1.5px solid var(--input-border);
   border-radius: 11px; font-family: inherit; text-align: center; font-weight: 650;
+  background: var(--card); color: var(--ink);
 }
 .count .btn { width: auto; flex: 0 0 auto; padding: 15px 20px; margin: 0; }
 
-.foot { text-align: center; font-size: 12.5px; color: #5b6b7b; padding: 18px 16px 24px; line-height: 1.6; }
+.foot { text-align: center; font-size: 12.5px; color: var(--mid); padding: 18px 16px 24px; line-height: 1.6; }
 
-/* New: error and empty states. The prototype had neither — both are moments
-   for direction, not apology. */
+/* Error and empty states — both are moments for direction, not apology. */
 .notice {
-  margin: 24px 12px; background: #fff; border: 1px solid var(--line);
+  margin: 24px 12px; background: var(--card); border: 1px solid var(--line);
   border-radius: 12px; padding: 20px; text-align: center;
 }
 .notice h2 { margin: 0 0 8px; font-size: 18px; }
 .notice p { margin: 0; color: var(--mid); font-size: 15px; }
 
-/* New: visible keyboard focus. Coordinators do use these on a laptop. */
+/* Visible keyboard focus. Coordinators do use these on a laptop. */
 :focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -141,25 +222,25 @@ details[open] .more { display: none; }
 
 .admin { max-width: 940px; margin: 0 auto; padding-bottom: 60px; }
 
-.nav { background: var(--navy); color: #fff; padding: 0 20px; }
+.nav { background: var(--navy); color: var(--on-navy); padding: 0 20px; }
 .nav .inner { max-width: 940px; margin: 0 auto; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .nav .mark {
   font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase;
-  color: #8fb0cc; font-weight: 600; margin-right: 18px; padding: 16px 0;
+  color: var(--on-navy-kicker); font-weight: 600; margin-right: 18px; padding: 16px 0;
 }
 .nav a {
-  color: #cfe0ee; text-decoration: none; padding: 16px 12px; font-size: 15px;
+  color: var(--on-navy-dim); text-decoration: none; padding: 16px 12px; font-size: 15px;
   font-weight: 600; border-bottom: 3px solid transparent;
 }
-.nav a:hover { color: #fff; }
-.nav a[aria-current="page"] { color: #fff; border-bottom-color: #8fb0cc; }
+.nav a:hover { color: var(--on-navy); }
+.nav a[aria-current="page"] { color: var(--on-navy); border-bottom-color: var(--on-navy-kicker); }
 
 .head { padding: 26px 20px 6px; }
 .head h1 { font-size: 26px; margin: 0; font-weight: 650; }
 .head p { margin: 8px 0 0; color: var(--mid); font-size: 15px; max-width: 62ch; }
 
 .panel {
-  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
   margin: 14px 20px; padding: 20px;
 }
 .panel h2 { font-size: 18px; margin: 0 0 6px; font-weight: 650; }
@@ -175,7 +256,7 @@ th {
   text-align: left; font-size: 12px; letter-spacing: .8px; text-transform: uppercase;
   color: var(--mid); font-weight: 700; padding: 0 12px 8px 0; border-bottom: 1px solid var(--line);
 }
-td { padding: 11px 12px 11px 0; border-bottom: 1px solid #f4f6f9; vertical-align: top; }
+td { padding: 11px 12px 11px 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
 td.num { font-variant-numeric: tabular-nums; color: var(--mid); white-space: nowrap; }
 
 .pill { display: inline-block; font-size: 12.5px; font-weight: 650; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
@@ -185,63 +266,69 @@ td.num { font-variant-numeric: tabular-nums; color: var(--mid); white-space: now
 
 .step-n {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; background: var(--navy-2); color: #fff;
+  width: 26px; height: 26px; background: var(--navy-2); color: var(--card);
   border-radius: 50%; font-size: 14px; font-weight: 700; margin-right: 10px;
   flex: 0 0 auto;
 }
 .panel h2.step { display: flex; align-items: center; }
 
 .warnbox {
-  background: var(--amber-bg); border: 1px solid #e8d5a8; border-radius: 10px;
+  background: var(--amber-bg); border: 1px solid var(--amber-line); border-radius: 10px;
   padding: 13px 15px; font-size: 14.5px; margin: 0 0 14px;
 }
-.act { background: var(--navy-2); color: #fff; border: 0; border-radius: 10px;
+.act { background: var(--navy-2); color: var(--card); border: 0; border-radius: 10px;
   padding: 11px 18px; font-size: 15px; font-weight: 650; cursor: pointer;
   font-family: inherit; margin-right: 8px; }
-.act.ghost { background: #fff; color: var(--navy-2); border: 1.5px solid #c3d2df; }
+.act.ghost { background: var(--card); color: var(--navy-2); border: 1.5px solid var(--input-border); }
 .act:disabled { opacity: .5; cursor: default; }
 
 .field {
-  width: 100%; padding: 11px 13px; border: 1.5px solid #c3d2df; border-radius: 10px;
+  width: 100%; padding: 11px 13px; border: 1.5px solid var(--input-border); border-radius: 10px;
   font-family: inherit; font-size: 15px; margin-bottom: 12px;
+  background: var(--card); color: var(--ink);
 }
 
 pre.out {
-  background: #f6f8fa; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px;
   padding: 14px; overflow: auto; font-size: 12.5px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; max-height: 360px;
 }
-pre.out.ok { background: var(--green-bg); border-color: #bfe0cd; }
-pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
+pre.out.ok { background: var(--green-bg); border-color: var(--green-line); }
+pre.out.err { background: var(--red-bg); border-color: var(--red-line); }
 
 .drop {
-  border: 2px dashed #c3d2df; border-radius: 12px; padding: 40px 20px;
-  text-align: center; color: var(--mid); cursor: pointer; background: #f8fafc;
+  border: 2px dashed var(--input-border); border-radius: 12px; padding: 40px 20px;
+  text-align: center; color: var(--mid); cursor: pointer; background: var(--drop-bg);
   font-size: 15.5px;
 }
-.drop.over { border-color: var(--navy-2); background: #eef4fa; }
+.drop.over { border-color: var(--navy-2); background: var(--hover-bg); }
 
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; }
 .empty { color: var(--mid); font-size: 15px; padding: 8px 0; }
 
 /* ------------------------------------------------------------------ */
-/* New: logins. The sign-in screen, the user chip in the nav, and the  */
+/* Logins. The sign-in screen, the user chip in the nav, and the       */
 /* per-user access switches on /users.                                 */
 /* ------------------------------------------------------------------ */
 
 .auth-shell {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
   padding: 24px 16px;
-  background: linear-gradient(160deg, var(--navy) 0%, var(--navy-2) 55%, #2a5580 100%);
+  background: linear-gradient(160deg, var(--navy) 0%, var(--navy-2) 55%, var(--auth-grad-end) 100%);
+}
+@media (prefers-color-scheme: dark) {
+  /* --navy-2 doubles as the dark scheme's accent (a light blue), which would
+     wash the gradient out — keep the shell deep. */
+  .auth-shell { background: linear-gradient(160deg, #0a1826 0%, #14304a 100%); }
 }
 .auth-card {
-  background: #fff; border-radius: 16px; padding: 28px 26px 20px;
+  background: var(--card); border-radius: 16px; padding: 28px 26px 20px;
   width: 100%; max-width: 400px; box-shadow: 0 12px 40px rgba(8, 20, 34, .35);
 }
 .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
 .auth-logo {
   width: 42px; height: 42px; border-radius: 11px; background: var(--navy);
-  color: #fff; font-weight: 750; font-size: 22px; display: inline-flex;
+  color: var(--on-navy); font-weight: 750; font-size: 22px; display: inline-flex;
   align-items: center; justify-content: center; flex: 0 0 auto;
 }
 .auth-title { font-size: 17px; font-weight: 650; }
@@ -258,9 +345,9 @@ pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
 .lbl .field { margin-top: 5px; }
 
 .nav-user { margin-left: auto; display: flex; align-items: center; gap: 10px; padding: 8px 0; }
-.nav-name { color: #cfe0ee; font-size: 14px; font-weight: 600; }
+.nav-name { color: var(--on-navy-dim); font-size: 14px; font-weight: 600; }
 .nav-out {
-  background: rgba(255, 255, 255, .12); color: #fff; border: 0; border-radius: 8px;
+  background: rgba(255, 255, 255, .12); color: var(--on-navy); border: 0; border-radius: 8px;
   padding: 7px 12px; font-size: 13.5px; font-weight: 650; cursor: pointer;
   font-family: inherit;
 }
@@ -275,7 +362,7 @@ pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
    immediately, and the state must be readable at a glance in a table. */
 .switch {
   width: 44px; height: 26px; border-radius: 20px; border: 0; padding: 2px;
-  background: #cdd6e0; cursor: pointer; display: inline-flex; align-items: center;
+  background: var(--switch-off); cursor: pointer; display: inline-flex; align-items: center;
   transition: background .15s;
 }
 .switch i {
@@ -301,13 +388,35 @@ pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
 .scroll-x { overflow-x: auto; }
 .scroll-x table { min-width: 760px; }
 
+/* Tables marked .rows collapse into labelled cards on a phone — the same
+   card idea the installer portal proves, instead of sideways scrolling. */
+@media (max-width: 700px) {
+  .scroll-x table.rows { min-width: 0; }
+  table.rows thead { display: none; }
+  table.rows tr {
+    display: block; border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px 12px; margin-bottom: 10px;
+  }
+  table.rows td {
+    display: flex; gap: 14px; justify-content: space-between;
+    border: 0; padding: 5px 0; text-align: right;
+  }
+  table.rows td > :first-child { text-align: right; }
+  table.rows td[data-label]::before {
+    content: attr(data-label); color: var(--mid); font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: .6px; font-weight: 700;
+    flex: 0 0 auto; padding-top: 2px; text-align: left;
+  }
+  table.rows td.num { white-space: normal; }
+}
+
 /* -- admin preview of another login ---------------------------------------- */
 /* Loud on purpose: an admin looking through someone else's eyes should never
    mistake it for their own session. */
 .preview-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 9px 22px; font-size: 14.5px; font-weight: 600;
-  background: #7c2d92; color: #fff;
+  background: var(--preview); color: #fff;
 }
 .preview-bar b { font-weight: 800; }
 .preview-exit {
@@ -320,50 +429,60 @@ pre.out.err { background: var(--red-bg); border-color: #eccbc7; }
 .wrap .preview-bar { border-radius: 10px; margin-bottom: 14px; }
 
 .btn-ghost {
-  border: 1px solid var(--line, #cdd7e1); border-radius: 7px;
+  border: 1px solid var(--line); border-radius: 7px;
   background: transparent; color: inherit; font: inherit; font-size: 13.5px;
   padding: 5px 10px; cursor: pointer; white-space: nowrap;
 }
-.btn-ghost:hover:not(:disabled) { background: rgba(16, 32, 48, .06); }
+.btn-ghost:hover:not(:disabled) { background: var(--hover-ink); }
 .btn-ghost:disabled { opacity: .45; cursor: default; }
 
 /* -- second-step prompts on job actions (book date, blocked reason, confirm) */
 .ask {
-  border: 1.5px solid #cdd7e1; border-radius: 12px; padding: 12px;
-  margin: 6px 0; display: grid; gap: 8px; background: rgba(16, 32, 48, .025);
+  border: 1.5px solid var(--input-border); border-radius: 12px; padding: 12px;
+  margin: 6px 0; display: grid; gap: 8px; background: var(--hover-ink);
 }
 .ask label { font-size: 14px; font-weight: 650; }
 .ask input[type="date"], .ask textarea {
-  font: inherit; padding: 10px; border: 1.5px solid #cdd7e1;
-  border-radius: 9px; width: 100%; background: #fff;
+  font: inherit; padding: 10px; border: 1.5px solid var(--input-border);
+  border-radius: 9px; width: 100%; background: var(--card); color: var(--ink);
 }
 .ask-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .ask-row .btn { margin: 0; flex: 1 1 auto; }
-.b-plain { background: transparent; color: inherit; border: 1.5px solid #cdd7e1; }
+.b-plain { background: transparent; color: inherit; border: 1.5px solid var(--input-border); }
 
 /* -- table tools: search, status chips, CSV export -------------------------- */
 .table-tools {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.chips { display: inline-flex; gap: 6px; }
+.chips { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .chip-btn {
-  border: 1.5px solid #cdd7e1; border-radius: 999px; background: transparent;
-  font: inherit; font-size: 13px; font-weight: 650; padding: 4px 12px;
-  cursor: pointer; color: inherit;
+  display: inline-block; border: 1.5px solid var(--input-border); border-radius: 999px;
+  background: transparent; font: inherit; font-size: 13px; font-weight: 650;
+  padding: 4px 12px; cursor: pointer; color: inherit; text-decoration: none;
 }
-.chip-btn.on { background: #102030; border-color: #102030; color: #fff; }
+.chip-btn.on { background: var(--chip-on); border-color: var(--chip-on); color: var(--card); }
 
-/* -- pagination (the Deliveries tab) --------------------------------------- */
+/* -- pagination ------------------------------------------------------------- */
 .pager {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; flex-wrap: wrap; margin-top: 14px;
 }
 .page-btn {
-  display: inline-block; border: 1.5px solid #c3d2df; border-radius: 10px;
-  background: #fff; color: var(--navy-2); font-size: 14px; font-weight: 650;
+  display: inline-block; border: 1.5px solid var(--input-border); border-radius: 10px;
+  background: var(--card); color: var(--navy-2); font-size: 14px; font-weight: 650;
   padding: 8px 14px; text-decoration: none; white-space: nowrap;
 }
-a.page-btn:hover { background: #eef4fa; }
+a.page-btn:hover { background: var(--hover-bg); }
 .page-btn.off { opacity: .45; }
 .page-where { font-size: 13.5px; color: var(--mid); }
+
+/* -- transient feedback after an admin action ------------------------------- */
+.toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  background: var(--chip-on); color: var(--card); border-radius: 10px;
+  padding: 11px 18px; font-size: 14.5px; font-weight: 650;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .25); z-index: 50;
+  max-width: min(92vw, 480px); text-align: center;
+}
+.toast.err { background: var(--red); color: #fff; }

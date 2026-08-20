@@ -51,33 +51,29 @@ function Output({ result }: { result: Result | "running" | null }) {
   );
 }
 
-export default function SetupSteps() {
-  const [results, setResults] = useState<Record<string, Result | "running" | null>>({});
-  const [url, setUrl] = useState("");
-
-  const go = async (step: StepKey, body?: Record<string, unknown>) => {
-    setResults((r) => ({ ...r, [step]: "running" }));
-    const result = await runStep(step, body);
-    setResults((r) => ({ ...r, [step]: result }));
-  };
-
-  const Step = ({
-    n,
-    title,
-    children,
-    step,
-    label,
-    ghost,
-    warn,
-  }: {
-    n: string;
-    title: string;
-    children: React.ReactNode;
-    step: StepKey;
-    label: string;
-    ghost?: boolean;
-    warn?: string;
-  }) => (
+/* Declared at module level, not inside SetupSteps — a component created
+   during render is remounted (state and all) on every parent render, which
+   is why the lint rule bans it. State comes in as props instead. */
+function Step({
+  n,
+  title,
+  children,
+  label,
+  ghost,
+  warn,
+  result,
+  onRun,
+}: {
+  n: string;
+  title: string;
+  children: React.ReactNode;
+  label: string;
+  ghost?: boolean;
+  warn?: string;
+  result: Result | "running" | null;
+  onRun: () => void;
+}) {
+  return (
     <div className="panel">
       <h2 className="step">
         <span className="step-n">{n}</span>
@@ -87,14 +83,25 @@ export default function SetupSteps() {
       {warn && <div className="warnbox">{warn}</div>}
       <button
         className={ghost ? "act ghost" : "act"}
-        disabled={results[step] === "running"}
-        onClick={() => go(step)}
+        disabled={result === "running"}
+        onClick={onRun}
       >
         {label}
       </button>
-      <Output result={results[step] ?? null} />
+      <Output result={result} />
     </div>
   );
+}
+
+export default function SetupSteps() {
+  const [results, setResults] = useState<Record<string, Result | "running" | null>>({});
+  const [url, setUrl] = useState("");
+
+  const go = async (step: StepKey, body?: Record<string, unknown>) => {
+    setResults((r) => ({ ...r, [step]: "running" }));
+    const result = await runStep(step, body);
+    setResults((r) => ({ ...r, [step]: result }));
+  };
 
   return (
     <>
@@ -107,17 +114,19 @@ export default function SetupSteps() {
         </p>
       </div>
 
-      <Step n="1" step="plan" title="Preview the board changes" label="Preview" ghost>
+      <Step n="1" title="Preview the board changes" label="Preview" ghost
+            result={results.plan ?? null} onRun={() => go("plan")}>
         Lists the columns that would be added to TN Orders. Nothing is created.
         Anything already there shows as <code>exists</code>.
       </Step>
 
       <Step
         n="2"
-        step="columns"
         title="Create the columns"
         label="Create columns"
         warn="This changes the live TN Orders board. Existing columns are left alone; only missing ones are added."
+        result={results.columns ?? null}
+        onRun={() => go("columns")}
       >
         Adds the columns the automation writes to, and shows the ID of each.
       </Step>
@@ -208,10 +217,11 @@ export default function SetupSteps() {
 
       <Step
         n="A"
-        step="installers"
         title="Set up the Installer Accounts board"
         label="Set up board"
         ghost
+        result={results.installers ?? null}
+        onRun={() => go("installers")}
       >
         Uses your existing board if <code>INSTALLERS_BOARD_ID</code> is set in
         Vercel — otherwise creates one. Either way it adds only the columns that
@@ -221,10 +231,11 @@ export default function SetupSteps() {
 
       <Step
         n="B"
-        step="sync"
         title="Copy the installers into the database"
         label="Sync installers"
         ghost
+        result={results.sync ?? null}
+        onRun={() => go("sync")}
       >
         The portal looks a magic link up in the database, so an account added in
         monday stays invisible until this runs. Run it again whenever you add,

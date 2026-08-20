@@ -94,7 +94,10 @@ the contract is what to check first if output looks thin.
 | | |
 |---|---|
 | `/login` | Sign in. First visit ever offers to create the first admin (needs `SETUP_KEY`). |
-| `/` | Dashboard — every eOrder read, with status and timing. Needs **Orders** access. |
+| `/` | Dashboard — every eOrder read, searchable and paginated over the whole ledger. Needs **Orders** access. |
+| `/deliveries` | Every webhook call monday made — including skips and no-file drops — filtered and paginated server side. Needs **Orders** access. |
+| `/orders/[item]` | One order in full: every read, the parse, warnings, revisions, its deliveries. Needs **Orders** access. |
+| `/sla` | The SLA console — engine mode, per-job countdowns, the notification ledger. Admin only, read-only. |
 | `/try` | Drop an eOrder in, see what the parser reads. Writes nothing. Needs **Orders** access. |
 | `/portal` | The installer portal for a **logged-in** installer user — their linked account's jobs. |
 | `/users` | Who can sign in and what each login sees. Admin only. |
@@ -107,6 +110,9 @@ the contract is what to check first if output looks thin.
 | `/api/py/sla/sweep` | the daily SLA pass (Vercel cron; portal secret or `CRON_SECRET`) |
 | `/api/py/portal/resync` | hourly cache rebuild (Vercel cron; same guard) |
 | `/api/py/parse` | xlsx in, JSON out. No monday, no database. |
+| `/api/py/webhooks` | the delivery log, paginated (`limit`/`offset`/`outcome`/`q`) |
+| `/api/py/order` | one item's full history: reads with parses, deliveries |
+| `/api/py/sla/preview` | what the SLA engine sees, read-only (admin session) |
 | `/api/py/health` | What's configured and what isn't — including the SLA engine's mode |
 
 ### Logins and access
@@ -141,7 +147,13 @@ there (§3.3).
 ```bash
 python -m pytest tests/ -q         # the whole suite: no network, no credentials
 python scripts/verify.py samples/  # extraction gate against real eOrders
+npm run lint && npm run typecheck  # the TypeScript half
+npm run build && npm run smoke     # boot the built app, prove the shell serves
 ```
+
+CI (`.github/workflows/ci.yml`) runs all of the above on every push — none of
+it needs credentials, because the app is designed to degrade without them and
+the smoke test asserts exactly that.
 
 `tests/test_ingest.py` runs the real ingest path — real eOrder files, real
 parser, real mapping — against a fake monday and a fake database, and encodes
@@ -226,6 +238,17 @@ re-dropped identical file posts an "Already read" Update instead of vanishing,
 every webhook delivery lands in the dashboard's webhook log, and
 `ALLOW_DUPLICATE_FILES=true` (testing only) re-processes duplicates — still
 without clobbering existing monday values.
+
+---
+
+## Optional environment variables added by the improvement pass
+
+| | |
+|---|---|
+| `MONDAY_ACCOUNT_SLUG` | `https://<slug>.monday.com` — set it and every item id in the app becomes a link to its board row. Unset, plain text. |
+| `MONDAY_SIGNING_SECRET` | monday app → Basic Information → Signing Secret. Set it and the webhook endpoints verify monday's JWT signature; unsigned posts are turned away. Unset, /health carries a warning. |
+| `LOG_RETENTION_DAYS` | How long `webhook_log` and `portal_events` are kept (default 180; 0 = keep forever). Purged by the daily sweep. The notification ledger is never purged — its uniqueness IS the dedup. |
+| `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` | Set all three and `sms.py` sends real texts through Twilio (`TWILIO_MESSAGING_SERVICE_SID` works in place of `TWILIO_FROM`). Unset, the logging stub runs. |
 
 ---
 

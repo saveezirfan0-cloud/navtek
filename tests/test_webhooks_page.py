@@ -41,11 +41,13 @@ class FakeStore:
         self.degraded = degraded
         self.calls = []
 
-    def webhook_page(self, limit=25, offset=0):
-        self.calls.append((limit, offset))
+    def webhook_page(self, limit=25, offset=0, outcome=None, q=None):
+        self.calls.append((limit, offset, outcome, q))
         if self.degraded:
             return [], 0
-        return self.rows[offset:offset + limit], len(self.rows)
+        rows = [r for r in self.rows
+                if not outcome or r.get("outcome") == outcome]
+        return rows[offset:offset + limit], len(rows)
 
     def ping(self):
         return {"ok": False, "state": "error", "detail": "fake"}
@@ -68,13 +70,25 @@ def test_a_page_carries_its_rows_and_the_whole_logs_total(monkeypatch):
     assert data["total"] == 60
     assert len(data["webhooks"]) == 25
     assert data["webhooks"][0]["monday_item_id"] == 25
-    assert fake.calls == [(25, 25)]
+    assert fake.calls == [(25, 25, None, "")]
 
 
 def test_limit_and_offset_are_clamped_not_trusted(monkeypatch):
     fake = _use(monkeypatch, FakeStore(_rows(5)))
     client().get("/api/py/webhooks?limit=9999&offset=-3")
-    assert fake.calls == [(100, 0)]
+    assert fake.calls == [(100, 0, None, "")]
+
+
+def test_the_outcome_filter_narrows_the_whole_log_not_the_page(monkeypatch):
+    rows = _rows(3)
+    rows[1]["outcome"] = "skipped"
+    fake = _use(monkeypatch, FakeStore(rows))
+    data = client().get("/api/py/webhooks?outcome=skipped").json()
+    assert data["total"] == 1
+    assert [h["outcome"] for h in data["webhooks"]] == ["skipped"]
+    # An outcome the schema doesn't know is dropped, not passed to the query.
+    client().get("/api/py/webhooks?outcome=exploded")
+    assert fake.calls[-1][2] is None
 
 
 def test_a_missing_table_says_run_the_migration(monkeypatch):
