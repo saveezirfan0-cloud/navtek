@@ -445,6 +445,23 @@ export async function getSlaPreview(session: string): Promise<SlaPreview | null>
   }
 }
 
+export type SweepResult = {
+  ok: boolean;
+  swept: boolean;
+  shadow?: boolean;
+  reason?: string;
+  go_live?: string;
+  jobs_checked?: number;
+  breaches?: Array<{ customer?: string; account?: string; actions?: string[] }>;
+};
+
+/** Run the daily SLA sweep on demand — same pass the 7am cron makes. In
+ * shadow mode it records breaches and logs would-sends; live, it escalates
+ * and texts. The caller must have verified the session belongs to an admin. */
+export async function runSlaSweep(session: string): Promise<SweepResult> {
+  return call("/sla/sweep", { method: "POST", headers: { "X-Session": session } });
+}
+
 // -- user management (admin) -----------------------------------------------
 
 export type InstallerAccountRef = { id: string; name: string; active: boolean };

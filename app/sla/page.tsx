@@ -1,5 +1,6 @@
 import Nav from "../Nav";
 import NoAccess from "../NoAccess";
+import RunSweep from "./RunSweep";
 import { Pill } from "../ui";
 import { getHealth, getSlaPreview } from "@/lib/api";
 import { mondayItemUrl, when } from "@/lib/format";
@@ -91,6 +92,7 @@ export default async function SlaPage() {
                   are texted. Go-live cutoff: {data.go_live}.
                 </div>
               )}
+              {data.mode !== "off" && <RunSweep shadow={data.mode === "shadow"} />}
             </div>
 
             {data.mode !== "off" && (
