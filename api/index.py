@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import Body, Cookie, FastAPI, Header, HTTPException, Query, Request  # noqa: E402
 from fastapi.responses import JSONResponse, RedirectResponse  # noqa: E402
 
-from _lib import bootstrap, columns as columns_mod, config, emailer, notify, portal, sla, users  # noqa: E402
+from _lib import bootstrap, columns as columns_mod, config, emailer, notify, onboarding, portal, sla, users  # noqa: E402
 from _lib.ingest import handle_webhook  # noqa: E402
 from _lib.monday import Monday, MondayError  # noqa: E402
 from _lib.store import Store  # noqa: E402
@@ -248,6 +248,27 @@ async def installer_change(request: Request):
         return {"challenge": payload["challenge"]}
     try:
         result = notify.handle_installer_change(Monday(), Store(), payload)
+    except Exception as exc:  # noqa: BLE001 - 200 always, monday must not retry-storm
+        result = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+    return JSONResponse(result, status_code=200)
+
+
+@app.post("/api/py/installer-account-change")
+async def installer_account_change(request: Request):
+    """monday webhook on the Installer Accounts board — auto-onboarding.
+
+    Adding or editing a row does what Setup steps A and B plus a copy-paste
+    used to: the row gets a portal token and its Active tick, the board is
+    re-synced into the database, and the coordinator is emailed their magic
+    link. Every step is idempotent, so monday's retries — and the delivery
+    our own token write triggers — are free.
+    """
+    _webhook_guard(request)
+    payload = await request.json()
+    if "challenge" in payload:
+        return {"challenge": payload["challenge"]}
+    try:
+        result = onboarding.handle_account_event(Monday(), Store(), payload)
     except Exception as exc:  # noqa: BLE001 - 200 always, monday must not retry-storm
         result = {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
     return JSONResponse(result, status_code=200)
@@ -1041,6 +1062,23 @@ def setup_installers(x_setup_key: str = Header(default="")):
             f"column ({link['column_id']})"
         )
     result["installer_column_id"] = link["column_id"]
+
+    # Auto-onboarding: register the board's own webhooks here too, so step A
+    # alone switches it on — the app knows its own address, and waiting for
+    # step 4 to be re-run is exactly the kind of extra step this removes.
+    base = config.portal_base_url()
+    if base:
+        try:
+            result["onboarding_webhooks"] = bootstrap.register_installer_webhooks(
+                monday, base, result["board_id"])
+            result.setdefault("log", []).append(
+                "ready    auto-onboarding — a row added or edited on this "
+                "board now issues its token, syncs itself and emails the "
+                "coordinator their link")
+        except Exception as exc:  # noqa: BLE001
+            result.setdefault("log", []).append(
+                f"failed   auto-onboarding webhooks — {exc}. Run step 4 "
+                "again to register them.")
     return result
 
 

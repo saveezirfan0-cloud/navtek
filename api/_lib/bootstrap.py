@@ -405,4 +405,43 @@ def register_flow_webhooks(monday, base_url, board_id=None):
             continue
         result = _register_column_webhook(monday, board_id, column_id, url)
         registered.append({"column": key, **result})
-    return {"registered": registered, "skipped_missing_columns": skipped}
+    result = {"registered": registered, "skipped_missing_columns": skipped}
+
+    # The Installer Accounts board's own webhooks ride along too — but a
+    # portal board that doesn't exist yet must not fail the order webhooks.
+    try:
+        result["installer_board"] = register_installer_webhooks(monday, base)
+    except Exception as exc:  # noqa: BLE001
+        result["installer_board"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return result
+
+
+INSTALLER_BOARD_EVENTS = ("create_item", "change_column_value")
+
+
+def register_installer_webhooks(monday, base_url, installers_board_id=None):
+    """Auto-onboarding webhooks, on the Installer Accounts board itself.
+
+    create_item fires the moment a row lands, so a new account issues its own
+    token, syncs itself into the database and (address permitting) emails its
+    link with nobody pressing anything. change_column_value catches the rest
+    of the story: a coordinator email arriving later, a token reissued to cut
+    access, Active being unticked. Board-level events carry no config, so
+    idempotency is by event type — one webhook per event on this board, ever.
+    """
+    board_id = (installers_board_id or config.INSTALLERS_BOARD_ID
+                or find_installer_board(monday))
+    if not board_id:
+        return {"registered": [],
+                "skipped": "no Installer Accounts board yet — run step A first"}
+    suffix = f"?hook={config.WEBHOOK_SECRET}" if config.WEBHOOK_SECRET else ""
+    url = f"{base_url.rstrip('/')}/api/py/installer-account-change{suffix}"
+    existing = {h.get("event") for h in monday.webhooks(board_id)}
+    registered = []
+    for event in INSTALLER_BOARD_EVENTS:
+        if event in existing:
+            registered.append({"event": event, "already_registered": True})
+            continue
+        hook = monday.create_webhook(board_id, url, event)
+        registered.append({"event": event, "webhook_id": hook["id"]})
+    return {"board_id": board_id, "url": url, "registered": registered}

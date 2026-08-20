@@ -226,7 +226,11 @@ export default function SetupSteps() {
         Uses your existing board if <code>INSTALLERS_BOARD_ID</code> is set in
         Vercel — otherwise creates one. Either way it adds only the columns that
         are missing and issues a portal token to any account without one.
-        Accounts are seeded only onto a genuinely empty board.
+        Accounts are seeded only onto a genuinely empty board. It also switches
+        on <b>auto-onboarding</b>: from then on, a row added or edited on the
+        board issues its own token, syncs itself into the database, and emails
+        the coordinator their portal link — no more pressing these steps per
+        account.
       </Step>
 
       <Step
@@ -238,8 +242,10 @@ export default function SetupSteps() {
         onRun={() => go("sync")}
       >
         The portal looks a magic link up in the database, so an account added in
-        monday stays invisible until this runs. Run it again whenever you add,
-        deactivate or reissue an account.
+        monday stays invisible until this runs. With auto-onboarding registered
+        (step A), board changes sync themselves — this button is the manual
+        catch-up for anything added before that, and a safe way to force a
+        re-sync any time.
       </Step>
     </>
   );
