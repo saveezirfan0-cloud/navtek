@@ -29,6 +29,7 @@ DEFAULT_SETTINGS = {
     "emails": [],
     "notify_check": True,
     "notify_failed": True,
+    "daily_digest": False,
 }
 
 
@@ -225,6 +226,114 @@ def _fingerprint(outcome, status):
     basis = "|".join(str(outcome.get(k) or "") for k in
                      ("opportunity_id", "file_name", "reason")) + f"|{status}"
     return hashlib.sha256(basis.encode()).hexdigest()[:16]
+
+
+# --------------------------------------------------------------------------
+# The daily digest — yesterday's reads in one email, sent by the daily sweep
+# when the /settings toggle is on. Also a heartbeat: "0 orders read" from a
+# pipeline that says so every morning beats silence from one that died.
+# --------------------------------------------------------------------------
+
+def send_daily_digest(store, now=None):
+    """Send at most one digest per UTC calendar day. Never raises."""
+    try:
+        return _send_daily_digest(store, now)
+    except Exception as exc:  # noqa: BLE001 - the digest must never cost the sweep
+        return {"sent": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+
+def _send_daily_digest(store, now=None):
+    from datetime import datetime, timedelta, timezone
+
+    settings = notification_settings(store)
+    if not settings.get("daily_digest"):
+        return {"sent": False, "reason": "daily digest is off"}
+    if not settings["emails"]:
+        return {"sent": False, "reason": "no notification emails configured"}
+
+    now = now or datetime.now(timezone.utc)
+    today = now.date()
+    # Claimed BEFORE composing, one row per day — two sweeps racing (a cron
+    # retry, a manual run) resolve to one email, same as every other send.
+    if not store.claim_notification(0, f"digest:{today.isoformat()}",
+                                    payload={"to": settings["emails"]}):
+        return {"sent": False, "reason": "already sent today"}
+
+    since = now - timedelta(hours=24)
+    rows = [r for r in store.ingests_since(since.isoformat())
+            if r.get("status") in ("read", "check", "failed")]
+    counts = {"read": 0, "check": 0, "failed": 0}
+    for row in rows:
+        counts[row["status"]] += 1
+    attention = [r for r in rows if r["status"] in ("check", "failed")]
+
+    subject = (
+        f"Navtek eOrder daily digest — {sum(counts.values())} read, "
+        f"{len(attention)} need attention"
+    )
+    result = send_email(settings["emails"], subject,
+                        *_digest_bodies(counts, attention))
+    store.record_event(0, "email_sent",
+                       payload={"kind": f"digest:{today.isoformat()}",
+                                "subject": subject, "to": settings["emails"],
+                                **result})
+    return {"sent": result.get("ok", False), "to": settings["emails"], **result}
+
+
+def _digest_bodies(counts, attention):
+    import html as html_mod
+
+    base = config.portal_base_url()
+    total = sum(counts.values())
+
+    tiles = "".join(
+        f"<td style='padding:10px 18px 10px 0'>"
+        f"<div style='font-size:24px;font-weight:650'>{counts[key]}</div>"
+        f"<div style='font-size:13px;color:#5b6875'>{label}</div></td>"
+        for key, label in (("read", "Read cleanly"), ("check", "Need a look"),
+                           ("failed", "Failed"))
+    )
+
+    def row(r):
+        name = r.get("item_name") or r.get("file_name") or r.get("opportunity_id") or "—"
+        note = r.get("error") or " · ".join((r.get("warnings") or [])[:2])
+        link = (f"{base}/orders/{r['monday_item_id']}"
+                if base and r.get("monday_item_id") else None)
+        title = (f"<a href='{link}' style='color:#1e5b8f'>{html_mod.escape(str(name))}</a>"
+                 if link else html_mod.escape(str(name)))
+        badge = ("⚠️ Check" if r["status"] == "check" else "❌ Failed")
+        return (f"<li style='margin:6px 0'>{badge} — {title}"
+                + (f"<br><span style='color:#5b6875;font-size:13px'>"
+                   f"{html_mod.escape(str(note))}</span>" if note else "")
+                + "</li>")
+
+    listing = "".join(row(r) for r in attention[:15])
+    more = (f"<p style='color:#5b6875;font-size:13px'>…and "
+            f"{len(attention) - 15} more.</p>" if len(attention) > 15 else "")
+
+    html_body = (
+        "<div style=\"font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,"
+        "sans-serif;font-size:15px;color:#12181f;line-height:1.5\">"
+        "<h2 style='margin:0 0 6px;font-size:18px'>Yesterday's eOrders</h2>"
+        + ("<p style='margin:0 0 8px;color:#5b6875'>Nothing was read in the "
+           "last 24 hours.</p>" if total == 0 else "")
+        + f"<table style='border-collapse:collapse;margin:0 0 8px'><tr>{tiles}</tr></table>"
+        + (f"<h3 style='margin:14px 0 4px;font-size:15px'>Needs attention</h3>"
+           f"<ul style='margin:0 0 8px;padding-left:20px'>{listing}</ul>{more}"
+           if attention else "")
+        + (f"<p style='margin:12px 0 14px'><a href='{base}' "
+           f"style='color:#1e5b8f'>Open the dashboard</a></p>" if base else "")
+        + "<p style='margin:0;color:#5b6875;font-size:13px'>Navtek eOrder daily "
+        "digest · turn this off under Settings → Email notifications.</p></div>"
+    )
+    text_body = "\n".join(
+        ["Yesterday's eOrders", ""]
+        + [f"{label}: {counts[key]}" for key, label in
+           (("read", "Read cleanly"), ("check", "Need a look"), ("failed", "Failed"))]
+        + ([""] + [f"- {r['status']}: {r.get('item_name') or r.get('file_name') or '—'}"
+                   for r in attention[:15]] if attention else [])
+    )
+    return html_body, text_body
 
 
 def _compose(status, outcome, item_id):

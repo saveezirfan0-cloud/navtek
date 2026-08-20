@@ -493,6 +493,20 @@ class Store:
             for status in ("read", "check", "failed")
         }
 
+    def ingests_since(self, cutoff_iso, limit=2000):
+        """The slim columns the stats endpoint and the daily digest need,
+        newest first. Capped — a 30-day window on this board is hundreds of
+        rows, not thousands, and the cap keeps a runaway board from turning
+        the dashboard's one stats call into a megabyte transfer."""
+        return self._get("eorder_ingests", {
+            "select": "created_at,status,duration_ms,monday_item_id,"
+                      "opportunity_id,file_name,error,warnings,"
+                      "item_name:parsed->>derived_item_name",
+            "created_at": f"gte.{cutoff_iso}",
+            "order": "created_at.desc",
+            "limit": str(limit),
+        })
+
     def order_ingests(self, item_id):
         """Every read recorded for one monday item, newest first."""
         return self._get("eorder_ingests", {
@@ -922,3 +936,12 @@ class Store:
 
     def delete_user_sessions(self, user_id):
         return self._delete("app_sessions", {"user_id": f"eq.{user_id}"})
+
+    def delete_other_sessions(self, user_id, keep_sha):
+        """Every session for this user EXCEPT the one acting — a password
+        change signs out every other device without logging out the person
+        who just proved they know both passwords."""
+        return self._delete("app_sessions", {
+            "user_id": f"eq.{user_id}",
+            "token_sha256": f"neq.{keep_sha}",
+        })

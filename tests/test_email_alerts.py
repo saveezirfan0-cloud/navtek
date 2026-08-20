@@ -114,4 +114,49 @@ def test_settings_merge_over_defaults():
     store = SettingsStore({emailer.SETTINGS_KEY: {"emails": ["a@b.co"]}})
     merged = emailer.notification_settings(store)
     assert merged == {"emails": ["a@b.co"], "notify_check": True,
-                      "notify_failed": True}
+                      "notify_failed": True, "daily_digest": False}
+
+
+# -- the daily digest --------------------------------------------------------
+
+def _digest_store(rows, daily_digest=True):
+    store = SettingsStore({emailer.SETTINGS_KEY: {
+        "emails": ["ops@navtek.example"], "daily_digest": daily_digest}})
+    store.ingest_rows = rows
+    store.ingests_since = lambda cutoff, limit=2000: rows
+    return store
+
+
+def test_digest_sends_once_per_day_with_the_counts():
+    rows = [
+        {"status": "read", "created_at": "2026-08-19T22:00:00Z"},
+        {"status": "check", "created_at": "2026-08-19T23:00:00Z",
+         "item_name": "AGB Investment Group", "warnings": ["site phone missing"],
+         "monday_item_id": 5},
+        {"status": "failed", "created_at": "2026-08-20T01:00:00Z",
+         "file_name": "broken.xlsx", "error": "not an eOrder"},
+    ]
+    store = _digest_store(rows)
+    first = emailer.send_daily_digest(store)
+    assert first["sent"] is True
+    assert emailer.SENT[-1]["to"] == ["ops@navtek.example"]
+    assert "3 read, 2 need attention" in emailer.SENT[-1]["subject"]
+
+    second = emailer.send_daily_digest(store)
+    assert second["sent"] is False
+    assert second["reason"] == "already sent today"
+    assert len(emailer.SENT) == 1
+
+
+def test_digest_off_or_unconfigured_sends_nothing():
+    assert emailer.send_daily_digest(
+        _digest_store([], daily_digest=False))["sent"] is False
+    assert emailer.send_daily_digest(SettingsStore())["sent"] is False
+    assert emailer.SENT == []
+
+
+def test_a_quiet_day_still_sends_the_heartbeat():
+    store = _digest_store([])
+    result = emailer.send_daily_digest(store)
+    assert result["sent"] is True
+    assert "0 read" in emailer.SENT[-1]["subject"]

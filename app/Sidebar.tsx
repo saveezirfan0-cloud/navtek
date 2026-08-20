@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import CommandPalette, { OPEN_PALETTE_EVENT } from "./CommandPalette";
 import { signOut } from "./login/actions";
 import ThemeSwitcher from "./theme";
 
@@ -105,12 +106,15 @@ export default function Sidebar({
   name,
   email,
   isAdmin,
+  searchOrders,
 }: {
   current: string;
   groups: NavGroup[];
   name: string;
   email: string;
   isAdmin: boolean;
+  /** Whether this login may search the order ledger from the palette. */
+  searchOrders: boolean;
 }) {
   const [open, setOpen] = useState(false); // the phone drawer
   const [menu, setMenu] = useState(false); // the profile menu
@@ -158,6 +162,19 @@ export default function Sidebar({
         <span className="topbar-brand">
           <span className="side-logo" aria-hidden="true">N</span> Navtek
         </span>
+        <button
+          className="burger"
+          type="button"
+          style={{ marginLeft: "auto" }}
+          aria-label="Search"
+          onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
+        >
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"
+               strokeLinecap="round" aria-hidden="true">
+            <circle cx="9" cy="9" r="5.5" />
+            <path d="M13.2 13.2L17 17" />
+          </svg>
+        </button>
       </div>
       {open && <div className="scrim" onClick={closeAll} aria-hidden="true" />}
 
@@ -168,6 +185,25 @@ export default function Sidebar({
             <span className="side-name">Navtek</span>
             <span className="side-sub">eOrder workspace</span>
           </span>
+        </div>
+
+        <div className="side-search">
+          <button
+            type="button"
+            className="side-search-btn"
+            onClick={() => {
+              setOpen(false);
+              window.dispatchEvent(new Event(OPEN_PALETTE_EVENT));
+            }}
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"
+                 strokeLinecap="round" aria-hidden="true">
+              <circle cx="9" cy="9" r="5.5" />
+              <path d="M13.2 13.2L17 17" />
+            </svg>
+            <span>Search…</span>
+            <kbd>⌘K</kbd>
+          </button>
         </div>
 
         <nav className="side-nav" aria-label="Main">
@@ -233,6 +269,8 @@ export default function Sidebar({
           </button>
         </div>
       </aside>
+
+      <CommandPalette groups={groups} searchOrders={searchOrders} />
     </>
   );
 }

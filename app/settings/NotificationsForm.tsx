@@ -18,6 +18,7 @@ export default function NotificationsForm({
   const [emails, setEmails] = useState(initial.emails.join("\n"));
   const [notifyCheck, setNotifyCheck] = useState(initial.notify_check);
   const [notifyFailed, setNotifyFailed] = useState(initial.notify_failed);
+  const [dailyDigest, setDailyDigest] = useState(initial.daily_digest);
   const [toast, setToast] = useState<{ message: string; error?: boolean } | null>(null);
   const [saving, startSaving] = useTransition();
   const [testing, startTesting] = useTransition();
@@ -31,6 +32,7 @@ export default function NotificationsForm({
           .filter(Boolean),
         notify_check: notifyCheck,
         notify_failed: notifyFailed,
+        daily_digest: dailyDigest,
       });
       setToast(
         result.ok
@@ -84,6 +86,15 @@ export default function NotificationsForm({
             disabled={readOnly}
           />
           Email when a read <b>❌ Fails</b>
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={dailyDigest}
+            onChange={(e) => setDailyDigest(e.target.checked)}
+            disabled={readOnly}
+          />
+          <b>Daily digest</b> — one summary of the last 24 hours, every morning
         </label>
       </div>
 

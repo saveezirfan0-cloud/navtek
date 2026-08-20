@@ -316,6 +316,10 @@ def sla_sweep(
     _cron_authorise(x_portal_secret, authorization)
     result = sla.sweep(Monday(), Store())
     result["retention"] = Store().purge_logs(config.LOG_RETENTION_DAYS)
+    # The daily digest rides the same schedule. Independent of the SLA
+    # engine's own guards — a workspace with the SLA off still wants to hear
+    # how yesterday's orders went. Decides (and dedupes) for itself.
+    result["digest"] = emailer.send_daily_digest(Store())
     return result
 
 
@@ -602,6 +606,74 @@ def auth_me(
     return {"user": users.public_user(_session_user(Store(), x_session))}
 
 
+# -- your own account (any signed-in user) ----------------------------------
+#
+# Self-service that used to need an admin: your display name, your password,
+# and the "I left myself signed in somewhere" button. Deliberately narrower
+# than /users/update — access flags and active status stay admin-only.
+
+@app.post("/api/py/auth/profile")
+def auth_update_profile(
+    body: dict = Body(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    _authorise(x_portal_secret)
+    store = Store()
+    me = _session_user(store, x_session)
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Enter a name.")
+    row = store.update_user(me["id"], {"name": name[:120]})
+    if not row:
+        raise HTTPException(
+            503, f"Could not save — {store.degraded or 'database write failed'}."
+        )
+    return {"user": users.public_user(row)}
+
+
+@app.post("/api/py/auth/change-password")
+def auth_change_password(
+    body: dict = Body(...),
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """Change your own password. Proves the current one first — a walked-away
+    laptop must not be enough to lock its owner out. Every OTHER session is
+    signed out; the one that just proved both passwords stays."""
+    _authorise(x_portal_secret)
+    store = Store()
+    me = _session_user(store, x_session)
+    current = body.get("current_password") or ""
+    new = body.get("new_password") or ""
+    if not users.verify_password(current, me.get("password_hash") or ""):
+        raise HTTPException(401, "The current password isn't right.")
+    problem = users.password_problem(new)
+    if problem:
+        raise HTTPException(400, problem)
+    row = store.update_user(me["id"], {"password_hash": users.hash_password(new)})
+    if not row:
+        raise HTTPException(
+            503, f"Could not save — {store.degraded or 'database write failed'}."
+        )
+    store.delete_other_sessions(me["id"], users.token_sha(x_session))
+    return {"ok": True}
+
+
+@app.post("/api/py/auth/logout-all")
+def auth_logout_all(
+    x_portal_secret: str = Header(default=""),
+    x_session: str = Header(default=""),
+):
+    """Sign out everywhere — every session including this one. The web half
+    clears its cookie and lands the person back on /login."""
+    _authorise(x_portal_secret)
+    store = Store()
+    me = _session_user(store, x_session)
+    store.delete_user_sessions(me["id"])
+    return {"ok": True}
+
+
 # -- user management (admin only) ------------------------------------------
 
 @app.get("/api/py/users")
@@ -751,6 +823,7 @@ def settings_save(
         "emails": emailer.clean_emails(incoming.get("emails")),
         "notify_check": bool(incoming.get("notify_check", True)),
         "notify_failed": bool(incoming.get("notify_failed", True)),
+        "daily_digest": bool(incoming.get("daily_digest", False)),
     }
     saved = store.save_setting(emailer.SETTINGS_KEY, value, updated_by=me.get("email"))
     if not saved:
@@ -1248,6 +1321,74 @@ def recent(
         # should mean two failures, full stop.
         "counts": store.ingest_counts(),
         "ingests": [_ingest_row(r) for r in rows],
+    }
+
+
+@app.get("/api/py/stats")
+def stats(
+    days: int = Query(default=30),
+    x_portal_secret: str = Header(default=""),
+):
+    """The dashboard's activity chart and health tiles, in one call.
+
+    Aggregated here, not in the browser: PostgREST doesn't group, and the
+    dashboard should not download a month of rows to draw twelve pixels of
+    bar. Same audience and guard as /recent.
+    """
+    _authorise(x_portal_secret)
+    store = Store()
+    if not store.enabled:
+        return {"enabled": False, "database": store.ping()}
+
+    from datetime import date, datetime, timedelta, timezone
+
+    days = max(7, min(days, 90))
+    today = datetime.now(timezone.utc).date()
+    cutoff = today - timedelta(days=days - 1)
+    rows = store.ingests_since(f"{cutoff.isoformat()}T00:00:00Z")
+    if store.degraded:
+        return {"enabled": False, "database": store.ping()}
+
+    by_day = {}
+    durations = []
+    totals = {"read": 0, "check": 0, "failed": 0}
+    for row in rows:
+        status = row.get("status")
+        if status not in totals:
+            continue
+        day = str(row.get("created_at") or "")[:10]
+        try:
+            date.fromisoformat(day)
+        except ValueError:
+            continue
+        bucket = by_day.setdefault(day, {"read": 0, "check": 0, "failed": 0})
+        bucket[status] += 1
+        totals[status] += 1
+        if row.get("duration_ms"):
+            durations.append(int(row["duration_ms"]))
+
+    series = []
+    for offset in range(days):
+        day = (cutoff + timedelta(days=offset)).isoformat()
+        series.append({"date": day, **by_day.get(day, {"read": 0, "check": 0,
+                                                       "failed": 0})})
+
+    total = sum(totals.values())
+    durations.sort()
+
+    def percentile(p):
+        if not durations:
+            return None
+        return durations[min(len(durations) - 1, int(len(durations) * p))]
+
+    return {
+        "enabled": True,
+        "window_days": days,
+        "days": series,
+        "totals": totals,
+        "success_rate": (totals["read"] / total) if total else None,
+        "median_ms": percentile(0.5),
+        "p90_ms": percentile(0.9),
     }
 
 

@@ -498,12 +498,39 @@ export async function adminUpdateUser(
   });
 }
 
+// -- dashboard stats ---------------------------------------------------------
+
+export type DayStat = { date: string; read: number; check: number; failed: number };
+
+export type Stats = {
+  enabled: boolean;
+  window_days: number;
+  days: DayStat[];
+  totals: { read: number; check: number; failed: number };
+  success_rate: number | null;
+  median_ms: number | null;
+  p90_ms: number | null;
+};
+
+/** The 30-day activity series and health figures — aggregated server side,
+ * so the dashboard draws bars without downloading a month of rows. */
+export async function getStats(days = 30): Promise<Stats | null> {
+  try {
+    const data = await call(`/stats?days=${days}`);
+    return data?.enabled ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 // -- workspace settings (admin) ----------------------------------------------
 
 export type NotificationSettings = {
   emails: string[];
   notify_check: boolean;
   notify_failed: boolean;
+  /** One summary email each morning, sent by the daily sweep. */
+  daily_digest: boolean;
 };
 
 export type WorkspaceSettings = {
@@ -534,6 +561,39 @@ export async function sendTestEmail(
   session: string,
 ): Promise<{ sent: boolean; to: string[]; provider?: string; error?: string }> {
   return call("/settings/test-email", {
+    method: "POST",
+    body: JSON.stringify({}),
+    headers: { "X-Session": session },
+  });
+}
+
+// -- your own account --------------------------------------------------------
+
+export async function updateProfile(
+  session: string,
+  input: { name: string },
+): Promise<{ user: AuthUser }> {
+  return call("/auth/profile", {
+    method: "POST",
+    body: JSON.stringify(input),
+    headers: { "X-Session": session },
+  });
+}
+
+export async function changePassword(
+  session: string,
+  input: { current_password: string; new_password: string },
+): Promise<{ ok: boolean }> {
+  return call("/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify(input),
+    headers: { "X-Session": session },
+  });
+}
+
+/** Every session for this user, including the calling one. */
+export async function logoutAll(session: string): Promise<{ ok: boolean }> {
+  return call("/auth/logout-all", {
     method: "POST",
     body: JSON.stringify({}),
     headers: { "X-Session": session },

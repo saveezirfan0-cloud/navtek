@@ -4,7 +4,8 @@ import CsvButton from "./CsvButton";
 import Nav from "./Nav";
 import NoAccess from "./NoAccess";
 import { Pager, Pill, pageParam } from "./ui";
-import { getHealth, getRecent } from "@/lib/api";
+import ActivityChart from "./ActivityChart";
+import { getHealth, getRecent, getStats } from "@/lib/api";
 import { mondayItemUrl, when } from "@/lib/format";
 import { requireViewer } from "@/lib/auth";
 
@@ -28,10 +29,11 @@ export default async function Dashboard({
   const status = STATUSES.find((s) => s === params.status) ?? "";
   const q = (params.q ?? "").trim();
 
-  const [{ user, realUser }, health, recent] = await Promise.all([
+  const [{ user, realUser }, health, recent, stats] = await Promise.all([
     requireViewer(),
     getHealth(),
     getRecent({ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, status, q }),
+    getStats(30),
   ]);
   if (!user.can_orders && !user.is_admin) {
     return (
@@ -129,6 +131,43 @@ export default async function Dashboard({
             Counts cover every read ever recorded.
           </p>
         </div>
+
+        {stats && (
+          <div className="panel">
+            <h2>Last 30 days</h2>
+            <p>
+              One bar per day — how much arrived, and how much of it needed a
+              person.
+            </p>
+            <ActivityChart days={stats.days} />
+            <div className="grid" style={{ marginTop: 14 }}>
+              <div className="stat">
+                <div className="v">
+                  {stats.success_rate === null
+                    ? "—"
+                    : `${Math.round(stats.success_rate * 100)}%`}
+                </div>
+                <div className="k">Read cleanly, first time</div>
+              </div>
+              <div className="stat">
+                <div className="v">
+                  {stats.median_ms === null
+                    ? "—"
+                    : `${(stats.median_ms / 1000).toFixed(1)}s`}
+                </div>
+                <div className="k">Median file-to-board time</div>
+              </div>
+              <div className="stat">
+                <div className="v">
+                  {stats.p90_ms === null
+                    ? "—"
+                    : `${(stats.p90_ms / 1000).toFixed(1)}s`}
+                </div>
+                <div className="k">Slowest 10% take at least</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="panel">
           <h2>Reads</h2>

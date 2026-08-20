@@ -101,7 +101,7 @@ the contract is what to check first if output looks thin.
 | `/try` | Drop an eOrder in, see what the parser reads. Writes nothing. Needs **Orders** access. |
 | `/portal` | The installer portal for a **logged-in** installer user — their linked account's jobs. |
 | `/users` | Who can sign in and what each login sees. Admin only. |
-| `/settings` | Workspace settings — appearance (light/dark/system, per browser) for everyone; the ⚠️ Check / ❌ Failed alert-email recipients for admins. |
+| `/settings` | Workspace settings — your profile (name, password, sign out everywhere) and appearance for everyone; the ⚠️ Check / ❌ Failed alert emails and the daily digest for admins. |
 | `/setup` | Board setup. Admin only, plus `SETUP_KEY` for the board-changing steps. |
 | `/installers` | Accounts and their magic links. Admin only. |
 | `/j/[token]` | The installer portal via magic link — no login, the link is the password |
@@ -115,6 +115,8 @@ the contract is what to check first if output looks thin.
 | `/api/py/order` | one item's full history: reads with parses, deliveries |
 | `/api/py/sla/preview` | what the SLA engine sees, read-only (admin session) |
 | `/api/py/settings` | GET/POST the workspace settings; `/settings/test-email` sends a test (admin session) |
+| `/api/py/stats` | 30-day daily read counts, success rate and durations — the dashboard's chart |
+| `/api/py/auth/profile` + `/auth/change-password` + `/auth/logout-all` | your own account: rename, change password (current required, other devices signed out), end every session |
 | `/api/py/health` | What's configured and what isn't — including the SLA engine's mode |
 
 ### Logins and access

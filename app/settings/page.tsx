@@ -1,6 +1,7 @@
 import Nav from "../Nav";
 import ThemeSwitcher from "../theme";
 import NotificationsForm from "./NotificationsForm";
+import ProfileForm from "./ProfileForm";
 import { getSettings } from "@/lib/api";
 import { requireViewer, sessionToken } from "@/lib/auth";
 
@@ -26,6 +27,19 @@ export default async function Settings() {
         <div className="head">
           <h1>Settings</h1>
           <p>Your preferences, and how this workspace raises the alarm.</p>
+        </div>
+
+        <div className="panel">
+          <h2>My profile</h2>
+          <p>
+            Your name and password. What you can <i>see</i> is set per login by
+            an admin on the Users page.
+          </p>
+          <ProfileForm
+            name={realUser.name}
+            email={realUser.email}
+            readOnly={previewing}
+          />
         </div>
 
         <div className="panel">
