@@ -257,11 +257,6 @@ without clobbering existing monday values.
 - **Order Type**: where Rental vs Outright comes from. Blocks §4.
 - **An Upsell eOrder** for the sample set. That ACV branch has no test
   exercising it; `verify.py` says so on every run rather than passing quietly.
-- **One sample is still missing** from `samples/` — Cosmo Cranes (the
-  vanity-phone case, `1300 1 COSMO`). Its expectations are already in
-  `fixtures/expected.json`, so `verify.py` reports it as MISSING and fails
-  rather than passing on a reduced set. Qualityvend arrived Aug 2026 and now
-  runs in the gate.
 - **§8 of the brief** lists the multi-site sample as *Qantas Road Express /
   Upsell*, but the file in the pack is *Qualityvend / Add-On*, which is what
   §4.1 and the parser agree on. Worth correcting — as written it implies the
