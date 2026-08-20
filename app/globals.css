@@ -289,6 +289,14 @@ details[open] .more { display: none; }
   display: flex; align-items: center; gap: 10px; padding: 16px 16px 14px;
   border-bottom: 1px solid rgba(255, 255, 255, .08);
 }
+.side-brand-text { flex: 1; min-width: 0; }
+.side-collapse {
+  width: 26px; height: 26px; border: 0; border-radius: 7px; flex: 0 0 auto;
+  background: none; color: var(--on-navy-kicker); cursor: pointer;
+  display: none; align-items: center; justify-content: center;
+}
+.side-collapse:hover { background: rgba(255, 255, 255, .1); color: var(--on-navy); }
+.side-collapse svg { width: 16px; height: 16px; }
 .side-logo {
   width: 30px; height: 30px; border-radius: 8px; flex: 0 0 auto;
   background: linear-gradient(150deg, #2a5580, #1b3d5f);
@@ -413,6 +421,36 @@ details[open] .more { display: none; }
 .burger svg { width: 20px; height: 20px; }
 .scrim {
   position: fixed; inset: 0; z-index: 39; background: rgba(8, 16, 26, .55);
+}
+
+/* -- collapsing the sidebar to an icon rail (desktop only) ------------------
+   The toggle in the brand row sets <html data-sidenav="collapsed"> (see
+   Sidebar.tsx); everything below keys off that. Content follows for free —
+   .admin's margin reads the same --sidebar-w. On a phone the sidebar is a
+   drawer, so none of this applies there and the toggle stays hidden. */
+@media (min-width: 901px) {
+  .side-collapse { display: inline-flex; }
+  html[data-sidenav="collapsed"] { --sidebar-w: 64px; }
+  html[data-sidenav="collapsed"] .side-brand-text,
+  html[data-sidenav="collapsed"] .side-label,
+  html[data-sidenav="collapsed"] .side-link span,
+  html[data-sidenav="collapsed"] .profile-meta,
+  html[data-sidenav="collapsed"] .profile-btn .chev { display: none; }
+  html[data-sidenav="collapsed"] .side-brand {
+    flex-direction: column; gap: 10px; padding: 14px 8px 12px;
+  }
+  html[data-sidenav="collapsed"] .side-nav { padding: 10px 8px 12px; }
+  html[data-sidenav="collapsed"] .side-link { justify-content: center; padding: 10px 0; }
+  /* The group labels are gone, so a hairline keeps the groups readable. */
+  html[data-sidenav="collapsed"] .side-group {
+    margin-bottom: 8px; padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, .07);
+  }
+  html[data-sidenav="collapsed"] .side-group:first-child { border-top: 0; padding-top: 0; }
+  html[data-sidenav="collapsed"] .side-foot { padding: 10px 8px; }
+  html[data-sidenav="collapsed"] .profile-btn { justify-content: center; padding: 8px 0; }
+  /* The rail is too narrow to hold the menu — let it fly out instead. */
+  html[data-sidenav="collapsed"] .profile-menu { left: 8px; right: auto; width: 240px; }
 }
 
 @media (max-width: 900px) {

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { signOut } from "./login/actions";
 import ThemeSwitcher from "./theme";
 
@@ -11,6 +11,40 @@ import ThemeSwitcher from "./theme";
  * at the bottom rail. Server-side concerns stay out: Nav.tsx decides WHICH
  * links this login gets; this component only draws and folds them.
  */
+
+// -- collapsed / expanded, remembered per browser ---------------------------
+//
+// Same pattern as the theme (app/theme.tsx): the choice lands on
+// <html data-sidenav="collapsed">, which the CSS keys the narrow rail off,
+// and localStorage remembers it. The inline script in the root layout applies
+// it before first paint, so a collapsed sidebar never flashes open. Desktop
+// only — on a phone the sidebar is already a drawer.
+
+export const SIDENAV_KEY = "navtek-sidenav";
+
+const collapseListeners = new Set<() => void>();
+
+function subscribeCollapsed(listener: () => void) {
+  collapseListeners.add(listener);
+  return () => collapseListeners.delete(listener);
+}
+
+function isCollapsed(): boolean {
+  return document.documentElement.getAttribute("data-sidenav") === "collapsed";
+}
+
+function applyCollapsed(collapsed: boolean) {
+  const root = document.documentElement;
+  if (collapsed) root.setAttribute("data-sidenav", "collapsed");
+  else root.removeAttribute("data-sidenav");
+  try {
+    if (collapsed) localStorage.setItem(SIDENAV_KEY, "collapsed");
+    else localStorage.removeItem(SIDENAV_KEY);
+  } catch {
+    // Private browsing without storage still collapses for this page.
+  }
+  collapseListeners.forEach((listener) => listener());
+}
 
 export type NavLink = { href: string; label: string; icon: string };
 export type NavGroup = { label: string; links: NavLink[] };
@@ -115,6 +149,10 @@ export default function Sidebar({
   const [open, setOpen] = useState(false); // the phone drawer
   const [menu, setMenu] = useState(false); // the profile menu
   const menuRef = useRef<HTMLDivElement>(null);
+  // The server snapshot says "expanded"; the client corrects on hydration —
+  // visually nothing moves, because the inline script set the attribute the
+  // CSS draws from before React ever ran.
+  const collapsed = useSyncExternalStore(subscribeCollapsed, isCollapsed, () => false);
 
   // Following a link closes the drawer and the menu; so does a click outside
   // the menu or the Escape key — small things, but they are the difference
@@ -164,10 +202,25 @@ export default function Sidebar({
       <aside className={`sidebar ${open ? "open" : ""}`}>
         <div className="side-brand">
           <span className="side-logo" aria-hidden="true">N</span>
-          <span>
+          <span className="side-brand-text">
             <span className="side-name">Navtek</span>
             <span className="side-sub">eOrder workspace</span>
           </span>
+          <button
+            className="side-collapse"
+            type="button"
+            aria-label={collapsed ? "Expand the menu" : "Collapse the menu"}
+            title={collapsed ? "Expand the menu" : "Collapse the menu"}
+            aria-expanded={!collapsed}
+            onClick={() => applyCollapsed(!collapsed)}
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"
+                 strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {collapsed
+                ? <path d="M7 5l5 5-5 5M12.5 5v10" />
+                : <path d="M13 5l-5 5 5 5M7.5 5v10" />}
+            </svg>
+          </button>
         </div>
 
         <nav className="side-nav" aria-label="Main">
@@ -180,6 +233,7 @@ export default function Sidebar({
                   className="side-link"
                   href={link.href}
                   aria-current={link.href === current ? "page" : undefined}
+                  title={collapsed ? link.label : undefined}
                   onClick={closeAll}
                 >
                   <Icon name={link.icon} />
@@ -218,6 +272,7 @@ export default function Sidebar({
             type="button"
             aria-haspopup="menu"
             aria-expanded={menu}
+            title={collapsed ? name : undefined}
             onClick={() => setMenu(!menu)}
           >
             <span className="avatar" aria-hidden="true">{initials(name)}</span>
