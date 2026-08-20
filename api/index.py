@@ -854,13 +854,65 @@ def activity(
     x_session: str = Header(default=""),
 ):
     """The audit trail, for admins: portal events (views, write-backs, failed
-    logins, SLA breaches) and unrecognised order reasons. The data was always
-    collected; this is the first window onto it."""
+    logins, SLA breaches), webhook deliveries, file reads and unrecognised
+    order reasons — one merged timeline, newest first."""
     _authorise(x_portal_secret)
     store = Store()
     _require_admin(_session_user(store, x_session))
+
+    def took(ms):
+        return f"{ms / 1000:.1f}s" if ms else None
+
+    feed = [
+        {
+            "action": e.get("action"),
+            "monday_item_id": e.get("monday_item_id"),
+            "installer_account_id": e.get("installer_account_id"),
+            "payload": e.get("payload") or {},
+            "created_at": e.get("created_at"),
+        }
+        for e in store.recent_events(150)
+    ]
+
+    # Webhook deliveries — "a file was dropped / monday called us", including
+    # the skips and no-file deliveries monday's own log shows as Success. An
+    # absent webhook_log table (0004 not run) degrades to an empty list.
+    for h in store.recent_webhooks(75):
+        feed.append({
+            "action": f"webhook_{h.get('outcome') or 'processed'}",
+            "monday_item_id": h.get("monday_item_id"),
+            "installer_account_id": None,
+            "payload": {
+                "file": h.get("file_name"),
+                "order": h.get("opportunity_id"),
+                "detail": h.get("reason") or h.get("status"),
+                "took": took(h.get("duration_ms")),
+            },
+            "created_at": h.get("created_at"),
+        })
+
+    # File reads — what the parser made of each upload.
+    for r in store.recent_ingests(75):
+        notes = r.get("error") or " · ".join(
+            [*(r.get("changed_fields") or []), *(r.get("warnings") or [])][:3]
+        )
+        feed.append({
+            "action": f"file_{r.get('status') or 'read'}",
+            "monday_item_id": r.get("monday_item_id"),
+            "installer_account_id": None,
+            "payload": {
+                "file": r.get("file_name"),
+                "order": r.get("opportunity_id"),
+                "detail": notes or None,
+                "took": took(r.get("duration_ms")),
+            },
+            "created_at": r.get("created_at"),
+        })
+
+    feed.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+
     return {
-        "events": store.recent_events(150),
+        "events": feed[:150],
         "unknown_order_reasons": store.recent_unknown_reasons(50),
         "notifications": store.recent_notifications(50),
     }
