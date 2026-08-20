@@ -784,6 +784,27 @@ class Store:
         )
         return bool(rows)
 
+    # -- app settings --------------------------------------------------------
+    #
+    # Admin-editable, non-secret values — notification recipients and the
+    # like. One row per key, JSON value. Secrets stay in the environment.
+
+    def get_setting(self, key):
+        rows = self._get("app_settings",
+                         {"key": f"eq.{key}", "select": "value", "limit": "1"})
+        return rows[0]["value"] if rows else None
+
+    def save_setting(self, key, value, updated_by=None):
+        from datetime import datetime, timezone
+
+        rows = self._post(
+            "app_settings",
+            [{"key": key, "value": value, "updated_by": updated_by,
+              "updated_at": datetime.now(timezone.utc).isoformat()}],
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+        return rows[0] if rows else None
+
     # -- app users & sessions ----------------------------------------------
     #
     # These back the web app's logins (0002_users.sql). Same never-raise

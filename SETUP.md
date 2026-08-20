@@ -162,14 +162,17 @@ GitHub replaces the placeholder. Click the file to confirm it now begins
    installer notifications can't guarantee one-text-per-job, so they stay off.
 9. Repeat with `0006_webhook_dedup.sql` — that one lets two deliveries of the
    same drop racing each other resolve to exactly one ingest.
+10. Repeat with `0007_app_settings.sql` — that one stores the workspace
+    settings edited from the app itself, starting with who gets emailed when
+    an eOrder lands as ⚠️ Check or ❌ Failed (Settings → Email notifications).
 
 You want **Success. No rows returned.** That is what a successful table
 creation looks like — it isn't an error.
 
-Confirm it: click **Table Editor**. You should see ten tables —
+Confirm it: click **Table Editor**. You should see eleven tables —
 `installer_accounts`, `eorder_ingests`, `portal_events`, `jobs_cache`,
 `unknown_order_reasons`, `app_users`, `app_sessions`, `webhook_log`,
-`notifications`, `webhook_deliveries`.
+`notifications`, `webhook_deliveries`, `app_settings`.
 
 ### 3.3 Copy two values
 
@@ -257,6 +260,7 @@ runs fine without it:
 | `MONDAY_SIGNING_SECRET` | *(recommended)* monday → your profile picture → **Developers** → your app → **Basic Information** → **Signing Secret**. With it set, the webhook endpoints verify every delivery really came from monday and turn away anything else. Until it (or `WEBHOOK_SECRET`) is set, the dashboard shows a warning that the webhooks run open. |
 | `LOG_RETENTION_DAYS` | how many days of webhook-delivery and activity history to keep (default `180`; `0` keeps everything forever). The daily sweep purges older rows. |
 | `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` | set all three (from twilio.com → Console) and the installer SMS goes out as real texts. `TWILIO_FROM` is your Twilio number in `+61…` form, or a Messaging Service SID. Unset, sends go to the logs only — safe for testing. |
+| `RESEND_API_KEY` + `EMAIL_FROM` | set both (from resend.com → API Keys; `EMAIL_FROM` is a sender address on a domain you verified there) and the ⚠️ Check / ❌ Failed alert emails go out as real mail to the addresses saved on **Settings → Email notifications**. Unset, sends go to the logs only — safe for testing. Prefer plain SMTP instead? Set `SMTP_HOST` (+ optional `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`) with `EMAIL_FROM`. |
 
 ### 5.4 Deploy
 

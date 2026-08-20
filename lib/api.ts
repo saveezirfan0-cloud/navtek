@@ -515,6 +515,48 @@ export async function adminUpdateUser(
   });
 }
 
+// -- workspace settings (admin) ----------------------------------------------
+
+export type NotificationSettings = {
+  emails: string[];
+  notify_check: boolean;
+  notify_failed: boolean;
+};
+
+export type WorkspaceSettings = {
+  notifications: NotificationSettings;
+  email: { provider: "resend" | "smtp" | "log"; from: string | null };
+};
+
+export async function getSettings(session: string): Promise<WorkspaceSettings | null> {
+  try {
+    return await call("/settings", { headers: { "X-Session": session } });
+  } catch {
+    return null;
+  }
+}
+
+export async function saveSettings(
+  session: string,
+  notifications: NotificationSettings,
+): Promise<{ notifications: NotificationSettings }> {
+  return call("/settings", {
+    method: "POST",
+    body: JSON.stringify({ notifications }),
+    headers: { "X-Session": session },
+  });
+}
+
+export async function sendTestEmail(
+  session: string,
+): Promise<{ sent: boolean; to: string[]; provider?: string; error?: string }> {
+  return call("/settings/test-email", {
+    method: "POST",
+    body: JSON.stringify({}),
+    headers: { "X-Session": session },
+  });
+}
+
 // -- previewing a user (admin) -----------------------------------------------
 
 /** The AuthUser a given login resolves to — admin session required. Used to

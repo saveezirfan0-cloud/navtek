@@ -151,6 +151,16 @@ def handle_webhook(payload, monday=None, store=None):
         outcome = {**result, "ok": False, "reason": detail}
 
     _log_webhook(store, outcome, started)
+
+    # The alert email — ⚠️ Check and ❌ Failed reads go to the recipients
+    # configured on /settings. Decided (and deduped) inside emailer; a clean
+    # read costs one function call. Must never cost the order.
+    try:
+        from . import emailer
+        outcome["alert_email"] = emailer.notify_ingest_outcome(store, outcome)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+
     return outcome
 
 

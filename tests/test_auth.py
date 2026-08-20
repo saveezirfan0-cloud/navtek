@@ -124,6 +124,14 @@ def test_my_jobs_requires_a_session():
     assert client().get("/api/py/portal/my-jobs").status_code == 401
 
 
+def test_settings_require_a_session():
+    """Workspace settings decide who gets emailed about failures — reading
+    them leaks addresses, writing them redirects the alarm. Admin only."""
+    assert client().get("/api/py/settings").status_code == 401
+    assert client().post("/api/py/settings", json={"notifications": {}}).status_code == 401
+    assert client().post("/api/py/settings/test-email").status_code == 401
+
+
 def test_previewing_a_user_requires_a_session():
     """Preview renders the app through another login's eyes — admin only,
     and the httpOnly cookie that drives it is inert without an admin session."""
