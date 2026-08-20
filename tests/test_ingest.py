@@ -50,23 +50,59 @@ BOARD_COLUMNS = [
      "settings_str": json.dumps(
          {"labels": {"1": "Yes", "2": "No", "3": "Customer self-install"}})},
     {"id": "numeric_units", "title": "Units Total", "type": "numbers"},
+    {"id": "numeric_acv", "title": "ACV", "type": "numbers"},
+    {"id": "numeric_install", "title": "Install Value", "type": "numbers"},
     {"id": "date_order", "title": "Order Date", "type": "date"},
+    {"id": "subtasks_1", "title": "Subitems", "type": "subtasks",
+     "settings_str": json.dumps({"boardIds": [777]})},
 ]
+
+SUB_BOARD_ID = 777
 
 
 class FakeMonday:
-    def __init__(self, blob, existing_values=None, existing_name="x"):
+    def __init__(self, blob, existing_values=None, existing_name="x",
+                 group=None):
         self.blob = blob
         self.written = {}
         self.updates = []
         self.renamed = None
         self.subitems_created = []
+        self.subitem_written = []   # values handed to create_subitem
+        self.sub_columns = []       # columns created on the subitem board
+        self.moved = None           # (item_id, group_id) after a group move
         self._existing = existing_values or {}
         self._name = existing_name
+        self._group = group or {"id": "g_docusign",
+                                "title": "New Opps/Sent DocuSigns"}
         self.downloads = 0
 
     def board_columns(self, board_id):
+        if str(board_id) == str(SUB_BOARD_ID):
+            return list(self.sub_columns)
         return BOARD_COLUMNS
+
+    def create_column(self, board_id, title, column_type, settings=None,
+                      description=None):
+        assert str(board_id) == str(SUB_BOARD_ID), "only the subitem board grows"
+        column = {"id": f"sub_{column_type}_{len(self.sub_columns)}",
+                  "title": title, "type": column_type,
+                  "settings_str": json.dumps(settings) if settings else None}
+        self.sub_columns.append(column)
+        return column
+
+    def board_groups(self, board_id):
+        from datetime import datetime
+        now = datetime.now()
+        month = ["January", "February", "March", "April", "May", "June",
+                 "July", "August", "September", "October", "November",
+                 "December"][now.month - 1]
+        return [{"id": "g_docusign", "title": "New Opps/Sent DocuSigns"},
+                {"id": "g_month", "title": f"{month} {now.year}"}]
+
+    def move_to_group(self, item_id, group_id):
+        self.moved = (item_id, group_id)
+        return {"id": item_id}
 
     def asset_urls(self, item_id, column_id):
         return [{"name": "eorder.xlsx", "public_url": "https://example/x"}]
@@ -77,7 +113,7 @@ class FakeMonday:
 
     def item(self, item_id):
         return {
-            "id": item_id, "name": self._name,
+            "id": item_id, "name": self._name, "group": dict(self._group),
             "column_values": [{"id": k, "text": v} for k, v in self._existing.items()],
         }
 
@@ -120,7 +156,9 @@ class FakeMonday:
 
     def create_subitem(self, parent, name, values=None):
         self.subitems_created.append(name)
-        return {"id": str(len(self.subitems_created)), "board": {"id": "1"}}
+        self.subitem_written.append(values or {})
+        return {"id": str(len(self.subitems_created)),
+                "board": {"id": str(SUB_BOARD_ID)}}
 
     def post_update(self, item_id, body):
         self.updates.append(body)
@@ -185,6 +223,7 @@ def blob(filename):
 
 def run(filename, store=None, monday=None, existing=None):
     columns_mod.clear_cache()
+    ingest._SUB_COLS_CACHE.clear()
     config.CONFIG_WARNINGS.clear()
     config.ORDERS_BOARD_ID = BOARD_ID
     monday = monday or FakeMonday(blob(filename), existing_values=existing)
@@ -202,7 +241,9 @@ def test_new_eorder_populates_and_reports_clean():
     # The rename rides in the main mutation now — one round trip, not two.
     assert monday.written["name"] == "KANE CIVIL = 18 x RE400, 22 x VT202, 4 x AT551"
     assert monday.written["text_contact"] == "Gerard Cahalan"
-    assert monday.written["numeric_units"] == "44.0"
+    assert monday.written["numeric_units"] == "44"
+    assert monday.written["numeric_acv"] == "18144"        # §4.1: 54,432 / 36mo × 12
+    assert monday.written["numeric_install"] == "8000"
     assert monday.written["color_install"] == {"label": "Yes"}
     assert monday.written["date_order"] == {"date": "2026-07-02"}
     # Written as the board's own label — the code's "✅ Read" aligned to "Read".
@@ -287,11 +328,13 @@ def test_orders_with_nothing_to_ship_read_clean(sample):
 
 # -- Prompt 1: every install order gets one install item per site ------------
 
-def test_single_site_install_order_gets_exactly_one_install_item():
+def test_single_site_install_orders_get_no_subitems():
+    """Damon's rule from the first live drops: subitems are per delivery SITE,
+    and ~80% of orders are single-site — the row itself is the job. The portal
+    already treats a subitem-less order as its own single install item."""
     result, monday, _ = run(KANE)
     assert result["ok"]
-    # One site, one install item — named ship-to + units like a multi-site row.
-    assert monday.subitems_created == ["FFT TECHNOLOGY — 44 units"]
+    assert monday.subitems_created == []
 
 
 # -- ALLOW_DUPLICATE_FILES: the testing escape hatch --------------------------
@@ -332,7 +375,7 @@ def test_unrecognised_order_reason_is_recorded_not_swallowed():
 def test_a_value_already_in_monday_is_left_alone():
     _, monday, _ = run(KANE, existing={"text_contact": "Someone Corrected This"})
     assert "text_contact" not in monday.written
-    assert monday.written["numeric_units"] == "44.0"
+    assert monday.written["numeric_units"] == "44"
 
 
 # -- the database is not on the critical path -------------------------------
@@ -681,3 +724,89 @@ def test_fail_with_no_failed_like_label_still_posts_the_update():
     assert not result["ok"]
     assert "color_status" not in monday.written   # dropped, not exploded
     assert any("Could not read eOrder" in u for u in monday.updates)
+
+
+# -- Damon's first-live-drop feedback, 20 Aug 2026 ----------------------------
+
+def test_site_address_is_the_customer_never_the_ship_to():
+    """Kane's hardware ships to 39 Jindalee Cres Nowra — Paul Redmond's
+    workshop. The trucks live at 9-13 Underwood Ave Botany. Installers were
+    being sent to the workshop."""
+    _, kane, _ = run(KANE)
+    assert kane.written["text_addr"] == "9-13 Underwood Avenue, Botany NSW 2019"
+    assert "Jindalee" not in kane.written["text_addr"]
+
+    _, agb, _ = run(AGB)
+    assert agb.written["text_addr"] == "15 Lockwood Street, Merrylands NSW 2160"
+    assert "Nothing to Ship" not in agb.written["text_addr"]
+
+
+def test_phone_lands_with_the_plus_prefix():
+    _, monday, _ = run(KANE)
+    assert monday.written["phone_site"]["phone"] == "+61437353834"
+
+
+def test_a_read_order_is_filed_into_the_current_months_group():
+    """Rows start out wherever staff created them ("New Opps/Sent DocuSigns")
+    and were staying there."""
+    result, monday, _ = run(KANE)
+    assert result["ok"]
+    assert monday.moved == (123, "g_month")
+
+
+def test_an_order_already_in_a_month_group_stays_put():
+    """A revised eOrder months later must not drag an old order forward."""
+    monday = FakeMonday(blob(KANE), group={"id": "g_july", "title": "July 2026"})
+    result, monday, _ = run(KANE, monday=monday)
+    assert result["ok"]
+    assert monday.moved is None
+
+
+def test_multi_site_subitems_carry_their_fields_on_their_own_board(monkeypatch):
+    """The first live drops produced perfectly-named but EMPTY subitems:
+    values keyed by the parent board's column ids are refused wholesale by
+    the subitem board. The fields are now created there and written with
+    ITS ids."""
+    parsed = {
+        "opportunity_id": "006TESTSUBFIELDS", "company": "QUALITYVEND",
+        "derived_item_name": "QUALITYVEND = 12 x AT551",
+        "order_reason": "Add-On", "order_date": "July 2, 2026",
+        "ship_to_type": "multiple", "install_required": "Yes",
+        "site_contact_name": "A Person", "site_contact_phone": "0400000000",
+        "multi_site": [
+            {"company": "Site A", "qty": 4, "contact": "Alice",
+             "phone_e164": "+61400000001", "address": "1 Alpha St, Sydney"},
+            {"company": "Site B", "qty": 8, "contact": "Bob",
+             "phone_e164": "+61400000002", "address": "2 Beta Rd, Melbourne"},
+        ],
+        "lines": [{"qty": 12, "product": "AT551 Asset Tracker Service"}],
+        "_warnings": [],
+    }
+
+    class StubParser:
+        ACV_ORDER_REASONS = ["New Business"]
+
+        @staticmethod
+        def parse(handle):
+            return dict(parsed)
+
+    monkeypatch.setattr(ingest, "_parser", lambda: StubParser)
+    result, monday, _ = run(KANE)
+    assert result["ok"]
+    assert monday.subitems_created == ["Site A — 4 units", "Site B — 8 units"]
+
+    # The install-item fields were created ON THE SUBITEM BOARD…
+    titles = {c["title"] for c in monday.sub_columns}
+    assert {"Site Contact", "Site Phone", "Site Address",
+            "Units Total", "Contacted Date", "Booked Date"} <= titles
+
+    # …and the values were written with ITS column ids, not the parent's.
+    first = monday.subitem_written[0]
+    assert first, "subitem was created with no values"
+    assert all(k.startswith("sub_") for k in first)
+    by_title = {c["id"]: c["title"] for c in monday.sub_columns}
+    named = {by_title[k]: v for k, v in first.items()}
+    assert named["Site Contact"] == "Alice"
+    assert named["Site Address"] == "1 Alpha St, Sydney"
+    assert named["Units Total"] == "4"
+    assert named["Site Phone"]["phone"] == "+61400000001"

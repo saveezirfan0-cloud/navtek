@@ -32,6 +32,13 @@ KANE = {
     "site_phone_e164": "+61437353834",
     "site_phone_display": "0437 353 834",
     "site_contact_email": "gerard@kanecivil.com.au",
+    # Customer block (General Information) vs delivery block: the trucks live
+    # in Botany; the hardware ships to Paul Redmond's workshop in Nowra.
+    "address": "9-13 Underwood Avenue",
+    "suburb": "Botany",
+    "state": "New South Wales",
+    "postcode": "2019",
+    "delivery_address": "39 Jindalee Cres, Nowra NSW 2541",
     "installer_company": "FFT TECHNOLOGY",
     "installer_contact": "Paul Redmond",
     "installer_email": "paul@ffttechnology.com.au",
@@ -71,9 +78,13 @@ COLUMNS = {
 
 # -- encoders --------------------------------------------------------------
 
-def test_phone_strips_to_digits_for_monday():
+def test_phone_keeps_the_plus_for_tap_to_dial():
+    # 61437353834 breaks tap-to-dial and SMS routing; +61437353834 works.
     assert mapping.v_phone("+61437353834") == {
-        "phone": "61437353834", "countryShortName": "AU"
+        "phone": "+61437353834", "countryShortName": "AU"
+    }
+    assert mapping.v_phone("0437 353 834") == {
+        "phone": "+0437353834", "countryShortName": "AU"
     }
 
 
@@ -97,8 +108,15 @@ def test_date_still_accepts_other_orderings():
 
 
 def test_number_zero_survives_but_blank_does_not():
-    assert mapping.v_number(0) == "0.0"
+    assert mapping.v_number(0) == "0"
     assert mapping.v_number("") is None
+
+
+def test_whole_numbers_write_whole():
+    # "44.0" units on a board reads as a data error to the people using it.
+    assert mapping.v_number(44) == "44"
+    assert mapping.v_number("44.0") == "44"
+    assert mapping.v_number(7740.5) == "7740.5"   # real decimals survive
 
 
 # -- derived values --------------------------------------------------------
@@ -117,8 +135,8 @@ def test_units_total_is_none_not_zero_when_there_are_no_lines():
 def test_maps_the_fields_the_brief_lists():
     values = mapping.to_column_values(KANE, COLUMNS, installer_item_ids=[123])
     assert values["order__"] == "006VP00000agsnG"
-    assert values["numeric_mm0asnac"] == "18144.0"
-    assert values["numbers_units"] == "44.0"
+    assert values["numeric_mm0asnac"] == "18144"
+    assert values["numbers_units"] == "44"
     assert values["status_install"] == {"label": "Yes"}
     assert values["board_installer"] == {"item_ids": [123]}
     assert values["text_site"] == "Gerard Cahalan"
@@ -140,6 +158,27 @@ def test_existing_monday_values_are_never_clobbered():
     existing = {"text_site": "Someone Else", "numeric": ""}
     kept = mapping.merge_preserving(proposed, existing)
     assert kept == {"numeric": "8000"}
+
+
+# -- the site address is the CUSTOMER's, never the ship-to ------------------
+
+def test_site_address_is_the_customer_not_the_delivery_address():
+    """The first live drop sent installers to 39 Jindalee Cres Nowra — Paul
+    Redmond's workshop, where the hardware ships. The trucks are in Botany."""
+    assert mapping.site_address(KANE) == "9-13 Underwood Avenue, Botany NSW 2019"
+
+
+def test_nothing_to_ship_never_becomes_an_address():
+    agb = {**KANE, "address": "15 Lockwood Street", "suburb": "Merrylands",
+           "state": "New South Wales", "postcode": "2160",
+           "delivery_address": "Nothing to Ship"}
+    assert mapping.site_address(agb) == "15 Lockwood Street, Merrylands NSW 2160"
+
+
+def test_a_missing_customer_block_yields_no_address_not_the_ship_to():
+    bare = {**KANE, "address": None, "suburb": None, "state": None,
+            "postcode": None}
+    assert mapping.site_address(bare) is None
 
 
 # -- validation ------------------------------------------------------------
@@ -219,15 +258,9 @@ def test_ship_to_blank_is_flagged_once_despite_different_wordings():
     assert sum("ship-to" in w and "blank" in w for w in warnings) == 1
 
 
-def test_install_sites_is_uniform_across_order_shapes():
-    # Single-site install order → exactly one site, from the main delivery block.
-    sites = mapping.install_sites(KANE)
-    assert len(sites) == 1
-    assert sites[0]["company"] == "FFT TECHNOLOGY"
-    assert sites[0]["contact"] == "Gerard Cahalan"
-    assert sites[0]["phone_e164"] == "+61437353834"
-    assert sites[0]["qty"] == 44          # commissions line excluded
-    assert sites[0]["dispatch"] == "July 2, 2026"
+def test_install_sites_is_per_delivery_site_never_per_unit():
+    # Single-site install order → NO subitems; the order row is the job.
+    assert mapping.install_sites(KANE) == []
 
     # Multi-site order → its site rows, untouched.
     multi = {**KANE, "ship_to_type": "multiple",

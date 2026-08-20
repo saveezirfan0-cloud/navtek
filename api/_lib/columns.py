@@ -42,6 +42,13 @@ ORDER_COLUMNS = [
     ("install_required", "Install Required?", "status",
      {"labels": {"1": "Yes", "2": "No", "3": "Customer self-install"}}),
     ("vehicle_list", "Vehicle List", "file", None),
+    # ACV and Install Value are §4.1's whole point — computed by the parser,
+    # they must land somewhere. On the original production board they already
+    # exist (LEGACY_COLUMNS binds them by any of their historical titles); on
+    # any other board, setup step 2 now creates them instead of the values
+    # silently evaporating.
+    ("acv", "ACV", "numbers", None),
+    ("install_value", "Install Value", "numbers", None),
     ("units_total", "Units Total", "numbers", None),
     ("units_installed", "Units Installed", "numbers", None),
     ("progress_updated", "Progress Updated", "date", None),

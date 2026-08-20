@@ -207,15 +207,17 @@ class SubitemRecorder(FakeMonday):
         return super().create_subitem(parent, name, values)
 
 
-def test_a_single_site_order_gets_exactly_one_install_item():
+def test_a_single_site_order_gets_no_subitems_the_row_is_the_job():
+    """Damon's rule from the first live drops: subitems are per delivery
+    SITE, and ~80% of orders are single-site — those get none. The portal
+    already treats a subitem-less order as its own single install item."""
     monday = SubitemRecorder(blob(KANE))
     result, monday, _ = run(KANE, monday=monday)
     assert result["ok"]
-    assert len(monday.subitems_created) == 1
-    assert "44 units" in monday.subitems_created[0]
-    # Same fields as a multi-site item — including the dispatch date.
-    assert monday.subitem_values[0].get("date_order") == {"date": "2026-07-02"}
-    assert monday.subitem_values[0].get("text_contact") == "Gerard Cahalan"
+    assert monday.subitems_created == []
+    from _lib import portal
+    items = portal.install_items(monday, monday.item("123"))
+    assert len(items) == 1   # the order row stands in as the install item
 
 
 @pytest.mark.parametrize("sample", [AGB, SOUTHERN])
@@ -235,13 +237,11 @@ def test_multi_site_orders_get_one_install_item_per_site():
     }
     sites = mapping.install_sites(parsed)
     assert [s["company"] for s in sites] == ["Site A", "Site B"]
-    # A single-site order's one install item carries the dispatch date; the
-    # multi-site rows inherit it from the parent row in the portal instead.
-    single = mapping.install_sites({
+    # Single-site → NO install subitems; the order row is the job.
+    assert mapping.install_sites({
         "install_required": "Yes", "order_date": "July 2, 2026",
         "company": "KANE", "multi_site": [],
-    })
-    assert single[0]["dispatch"] == "July 2, 2026"
+    }) == []
 
 
 def test_install_sites_is_empty_for_self_install():

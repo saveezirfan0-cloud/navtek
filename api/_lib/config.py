@@ -16,7 +16,7 @@ import os
 # Bumped with every packaged build. Shown on /health and the dashboard so
 # "which build is actually live" is a fact you can read, not a guess — an
 # ambiguity that has cost real debugging time in this project.
-APP_VERSION = "2026-08-19.7"
+APP_VERSION = "2026-08-20.1"
 
 
 def _clean_secret(value):

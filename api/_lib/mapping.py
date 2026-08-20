@@ -78,12 +78,15 @@ def v_text(value):
 
 
 def v_number(value):
+    """"44", not "44.0" — monday renders the string it is given, and a unit
+    count with a decimal point reads as a data error to the people using it."""
     if value in (None, ""):
         return None
     try:
-        return str(float(value))
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    return str(int(number)) if number == int(number) else str(number)
 
 
 def v_status(label):
@@ -108,7 +111,9 @@ def v_phone(e164, country="AU"):
     digits = re.sub(r"[^\d]", "", str(e164))
     if not digits:
         return None
-    return {"phone": digits, "countryShortName": country}
+    # E.164 WITH the plus: 61437353834 breaks tap-to-dial and SMS routing;
+    # +61437353834 works everywhere.
+    return {"phone": f"+{digits}", "countryShortName": country}
 
 
 def v_date(value):
@@ -235,18 +240,25 @@ def units_total(parsed):
 
 
 def site_address(parsed):
-    """Prefer the explicit delivery address; fall back to the customer address."""
-    delivery = _get(parsed, "delivery_address")
-    if delivery and "multiple" not in str(delivery).lower():
-        return delivery
-    parts = [
-        _get(parsed, "address"),
-        _get(parsed, "suburb"),
-        _get(parsed, "state"),
-        str(_get(parsed, "postcode", default="")) or None,
-    ]
-    joined = " ".join(str(p).strip() for p in parts if p)
-    return joined or None
+    """The CUSTOMER's address from General Information — where the install is.
+
+    Never the delivery address. Hardware ships to the installer's workshop or
+    to "Nothing to Ship": Kane Civil's eOrder ships to 39 Jindalee Cres Nowra
+    (Paul Redmond's workshop) while the trucks live at 9-13 Underwood Ave
+    Botany — and an earlier version of this sent installers to the workshop.
+    Multi-site orders carry per-site addresses on their install items instead.
+    """
+    from .holidays_au import normalise_state
+
+    address = _get(parsed, "address")
+    suburb = _get(parsed, "suburb")
+    state = _get(parsed, "state")
+    postcode = _get(parsed, "postcode")
+    state_abbr = normalise_state(state) if state else None
+    tail = " ".join(str(p).strip() for p in (suburb, state_abbr, postcode) if p)
+    if address and tail:
+        return f"{str(address).strip()}, {tail}"
+    return str(address).strip() if address else (tail or None)
 
 
 def item_name(parsed):
@@ -386,38 +398,23 @@ def to_column_values(parsed, columns=None, installer_item_ids=None):
 
 
 def install_sites(parsed):
-    """The uniform install-site list for an order (Prompt 1 of the finalisation
-    pack): one entry per site that needs an install, whatever the order shape.
+    """Which install items (subitems) an order needs: one per DELIVERY SITE.
 
-    - Multiple Addresses order → its multi_site rows, unchanged (their install
-      items inherit the order's dispatch date from the parent row in the
-      portal's _shape fallback).
-    - Single-site order with Install Required = Yes → exactly one entry, built
-      from the main delivery block, carrying the same fields a multi-site row
-      does (contact, phone, email, address, units, dispatch date).
+    Damon's rule, from the first live drops: subitems are per site, never per
+    unit — Qualityvend's two installer sites get two, and the ~80% of orders
+    that are single-site get NONE. The order row itself is the single-site
+    install item everywhere downstream (portal.install_items already treats a
+    subitem-less order exactly that way), so the portal, the SLA clock and the
+    SMS trigger still see one uniform shape.
+
+    - Multiple Addresses order with Install Required = Yes → its multi_site
+      rows, one install item each, each with its own SLA clock.
+    - Single-site order → none. The row is the job.
     - Install Required = No or Customer self-install → none.
-
-    Every install item the ingest creates comes from this list, so the portal,
-    the SLA clock and the SMS trigger see one shape — no single-site special
-    case downstream.
     """
     if str(_get(parsed, "install_required") or "").strip().lower() != "yes":
         return []
-    sites = _get(parsed, "multi_site", default=[]) or []
-    if sites:
-        return list(sites)
-    return [{
-        # Ship-to company, matching what a multi-site row carries per site.
-        "company": _get(parsed, "installer_company") or _get(parsed, "company"),
-        "contact": _get(parsed, "site_contact_name"),
-        "phone": _get(parsed, "site_phone_display") or _get(parsed, "site_contact_phone"),
-        "phone_e164": _get(parsed, "site_phone_e164"),
-        "email": _get(parsed, "site_contact_email"),
-        "address": site_address(parsed),
-        "qty": units_total(parsed),
-        "dispatch": _get(parsed, "order_date"),
-        "notes": None,
-    }]
+    return list(_get(parsed, "multi_site", default=[]) or [])
 
 
 def subitem_values(site, columns=None):

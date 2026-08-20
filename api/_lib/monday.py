@@ -208,6 +208,13 @@ class Monday:
     def rename(self, board_id, item_id, name):
         return self.set_columns(board_id, item_id, {"name": name})
 
+    def move_to_group(self, item_id, group_id):
+        data = self.gql(
+            "mutation ($i: ID!, $g: String!) { move_item_to_group (item_id: $i, group_id: $g) { id } }",
+            {"i": str(item_id), "g": group_id},
+        )
+        return data["move_item_to_group"]
+
     def create_item(self, board_id, group_id, name, values=None):
         data = self.gql(
             """

@@ -40,10 +40,12 @@ MONTHS = [
 ]
 
 
-def current_group_id(monday, board_id, when=None):
+def current_group_id(monday, board_id, when=None, strict=False):
     """The group for this month, e.g. "August 2026".
 
-    Falls back to the board's first group rather than creating one — a stray
+    strict=True returns None when no month group exists — a caller about to
+    MOVE a row must not move it into some arbitrary first group. The default
+    falls back to the board's first group rather than creating one — a stray
     auto-created group on a live board is harder to notice than a row in the
     wrong place.
     """
@@ -59,7 +61,36 @@ def current_group_id(monday, board_id, when=None):
         title = group["title"].strip().lower()
         if month.lower() in title and str(year) in title:
             return group["id"]
+    if strict:
+        return None
     return groups[0]["id"] if groups else None
+
+
+def _in_a_month_group(title):
+    text = str(title or "").lower()
+    return any(month.lower() in text for month in MONTHS)
+
+
+def _file_into_month_group(monday, board_id, item_id, existing):
+    """A read order belongs in the current month's group.
+
+    Rows start out wherever staff created them — "New Opps/Sent DocuSigns" on
+    the live board — and were staying there. Once the eOrder is read, the row
+    is filed. A row already sitting in ANY month group is left alone: a
+    revised eOrder months later must not drag an old order forward. Filing is
+    best-effort — it must never cost the order.
+    """
+    try:
+        group = (existing or {}).get("group") or {}
+        if _in_a_month_group(group.get("title")):
+            return None
+        group_id = current_group_id(monday, board_id, strict=True)
+        if group_id and group_id != group.get("id"):
+            monday.move_to_group(item_id, group_id)
+            return group_id
+    except Exception:  # noqa: BLE001 - filing must not fail the order
+        traceback.print_exc()
+    return None
 
 
 def handle_webhook(payload, monday=None, store=None):
@@ -308,13 +339,13 @@ def _run(monday, store, payload, result, started):
     values, dropped = mapping.align_status_values(values, board_labels)
     warnings.extend(_dropped_warnings(dropped, cols))
 
-    # --- install items, one per site (§8.4 + finalisation Prompt 1) -----
+    # --- install items, one per DELIVERY SITE (§8.4) --------------------
     #
-    # EVERY order with Install Required = Yes gets one install subitem per
-    # site — a single-site order gets exactly one, built from the main
-    # delivery block — so the portal, the SLA clock and the SMS trigger all
-    # start from the same object. Orders with no install (Change of
-    # Ownership, Service Only Renewal, customer self-install) get none.
+    # Damon's rule from the first live drops: subitems are per site, never
+    # per unit — and the ~80% of orders that are single-site get NONE (the
+    # order row itself is the job; portal.install_items already treats a
+    # subitem-less order exactly that way). Orders with no install (Change
+    # of Ownership, Service Only Renewal, customer self-install) get none.
     #
     # Contained: subitems live on their own board with their own column IDs,
     # so a value write monday refuses must cost the subitem's values, not the
@@ -324,7 +355,7 @@ def _run(monday, store, payload, result, started):
     if sites:
         try:
             result["subitems"], subitem_notes = _sync_subitems(
-                monday, target_id, sites, cols)
+                monday, target_id, sites, board_id)
             warnings.extend(subitem_notes)
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"could not create per-site subitems: {exc}")
@@ -354,6 +385,12 @@ def _run(monday, store, payload, result, started):
     fields_written = len([k for k in values if k != "name"])
     if values:
         monday.set_columns(board_id, target_id, values)
+
+    # File the row into the current month's group (feedback from the first
+    # live drops: rows were staying in "New Opps/Sent DocuSigns").
+    moved = _file_into_month_group(monday, board_id, target_id, existing)
+    if moved:
+        result["moved_to_group"] = moved
 
     # --- feedback -------------------------------------------------------
     monday.post_update(
@@ -425,22 +462,101 @@ def _resolve_item(monday, board_id, dropped_on_item_id, opportunity_id, cols):
     return dropped_on_item_id, False
 
 
-def _sync_subitems(monday, parent_id, sites, cols):
+# The install-item fields every site subitem carries — the same set as the
+# parent, so each site runs its own SLA clock (contact, phone, address, units,
+# the portal's date columns, and an Installer link so each site can be
+# allocated separately — Qualityvend's two sites go to two different fitters).
+_SUBITEM_KEYS = (
+    "site_contact", "site_phone", "site_email", "site_address",
+    "installer_email", "units_total", "units_installed", "progress_updated",
+    "contacted_date", "booked_date", "scheduled_install_date",
+)
+
+# {subitem board id: {key: column id}} — column ids never change, so this is
+# filled once per warm process, not once per multi-site order.
+_SUB_COLS_CACHE = {}
+
+
+def _subitem_board_id(monday, board_id):
+    """The board subitems of this board live on, read from the parent board's
+    own Subitems column settings. None until the first subitem ever exists."""
+    import json as _json
+
+    for column in monday.board_columns(board_id):
+        if column.get("type") in ("subtasks", "subitems"):
+            try:
+                settings = _json.loads(column.get("settings_str") or "{}")
+            except (TypeError, ValueError):
+                continue
+            ids = settings.get("boardIds") or []
+            if ids:
+                return ids[0]
+    return None
+
+
+def _ensure_subitem_columns(monday, sub_board_id):
+    """Create-if-missing the install-item fields on the subitem board and
+    return {key: column_id} — ITS ids, which is why subitems were landing
+    empty: values keyed by the parent board's ids are refused wholesale."""
+    cached = _SUB_COLS_CACHE.get(str(sub_board_id))
+    if cached:
+        return cached
+
+    wanted = [(key, title, ctype, defaults)
+              for key, title, ctype, defaults in columns_mod.ORDER_COLUMNS
+              if key in _SUBITEM_KEYS]
+    wanted.append(("order_date", "Order Date", "date", None))
+
+    existing = {c["title"].strip().lower(): c
+                for c in monday.board_columns(sub_board_id)}
+    cols = {}
+    for key, title, ctype, defaults in wanted:
+        found = existing.get(title.lower())
+        if found and columns_mod._compatible(found["type"], ctype):
+            cols[key] = found["id"]
+        else:
+            cols[key] = monday.create_column(sub_board_id, title, ctype, defaults)["id"]
+
+    if config.INSTALLERS_BOARD_ID:
+        key, title, ctype = columns_mod.INSTALLER_LINK_COLUMN
+        found = existing.get(title.lower())
+        if found and columns_mod._compatible(found["type"], ctype):
+            cols[key] = found["id"]
+        else:
+            cols[key] = monday.create_column(
+                sub_board_id, title, ctype,
+                {"boardIds": [int(config.INSTALLERS_BOARD_ID)]},
+            )["id"]
+
+    _SUB_COLS_CACHE[str(sub_board_id)] = cols
+    return cols
+
+
+def _sync_subitems(monday, parent_id, sites, board_id):
     """One install item (subitem) per site, each with its own SLA clock.
 
-    Subitems live on a separate board with its own column IDs, so the parent
-    board's IDs are only valid there if the subitem board happens to mirror
-    them. When monday refuses the values, the subitem is created bare rather
-    than not at all — the site split is the point; the per-site fields are a
-    bonus.
+    Subitems live on their own board with their own column IDs — the reason
+    the first live drops produced perfectly-named but EMPTY subitems is that
+    values keyed by the parent board's ids are refused wholesale. The subitem
+    board is found from the parent's Subitems column, given the same field set
+    as the parent (once, cached), and every write uses its ids.
     """
     existing = {s["name"]: s for s in monday.subitems(parent_id)}
     written, notes = [], []
+
+    sub_cols = {}
+    sub_board = _subitem_board_id(monday, board_id)
+    if sub_board:
+        try:
+            sub_cols = _ensure_subitem_columns(monday, sub_board)
+        except MondayError as exc:
+            notes.append(f"could not prepare the install-item columns: {exc}")
+
     for index, site in enumerate(sites, start=1):
         name = mapping.subitem_name(site, index)
         if name in existing:
             continue
-        values = mapping.subitem_values(site, cols)
+        values = mapping.subitem_values(site, sub_cols) if sub_cols else {}
         try:
             created = monday.create_subitem(parent_id, name, values)
         except MondayError as exc:
@@ -458,6 +574,21 @@ def _sync_subitems(monday, parent_id, sites, cols):
                 f"subitem '{name}' was created without its site fields — "
                 f"monday refused them: {exc}"
             )
+        else:
+            if not sub_cols:
+                # The very first subitem on this board just CREATED the
+                # subitem board — set it up now and backfill this one.
+                sub_board = (created.get("board") or {}).get("id")
+                if sub_board:
+                    try:
+                        sub_cols = _ensure_subitem_columns(monday, sub_board)
+                        values = mapping.subitem_values(site, sub_cols)
+                        if values:
+                            monday.set_columns(sub_board, created["id"], values)
+                    except MondayError as exc:
+                        notes.append(
+                            f"install-item fields not written for '{name}': {exc}"
+                        )
         written.append({"id": created["id"], "name": name})
     return written, notes
 
