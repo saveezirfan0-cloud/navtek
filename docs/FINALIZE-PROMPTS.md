@@ -24,8 +24,9 @@ already caught don't get rebuilt:
 - **No vehicle-count reconciliation.** The Onboarding Vehicles sheet ships
   with TN's template junk rows in every file; the parser filters them and
   zero vehicles is normal. A count check flags 100% of orders.
-- **Order Type is never written** until someone states the Rental vs Outright
-  rule. `WRITE_ORDER_TYPE` stays false.
+- **Order Type is never written.** Rental vs Outright is a commercial term of
+  the deal, not a fact the eOrder records — Navtek's team fills the field in by
+  hand. `WRITE_ORDER_TYPE` stays false; this is settled, not pending.
 - **ACV stays blank when it doesn't apply** — never zero.
 - **Existing monday values are never clobbered.**
 - **Auth is now built**: logins, per-user Orders/Installer access, server-side

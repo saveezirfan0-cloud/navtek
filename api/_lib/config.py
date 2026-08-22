@@ -275,14 +275,25 @@ COLUMNS = _load_columns()
 # Behaviour switches
 # --------------------------------------------------------------------------
 
-# Order Type is unresolved (brief §4): monday's values are compound
-# ("New Business | Rental") and the eOrder only supplies the first half. The
-# Kane Civil file is headed "OUTRIGHT ORDER FORM" while its monday row reads
-# "New Business | Rental", so the form title is not a usable source.
+# Order Type stays a manual field (brief §4). Rental vs Outright is a
+# commercial term of the deal — rental means the customer pays monthly,
+# outright means they have bought the hardware — decided when the order is
+# written and typed into monday by the team that writes it. No document
+# carries it: monday's values are compound ("New Business | Rental") and the
+# eOrder only supplies the first half, and the Kane Civil file is headed
+# "OUTRIGHT ORDER FORM" while its monday row reads "New Business | Rental", so
+# the form title is not a usable source either.
 #
-# Default off. Do not turn this on until Damon's team has confirmed where
-# Rental vs Outright comes from — a wrong value here is worse than a blank one,
-# because a blank prompts someone to fill it in and a wrong one does not.
+# The billing block hints at it — Kane Civil (rental) carries a Total Monthly
+# Payment and no one-off hardware charge, and an outright deal bills the
+# hardware with no monthly — but there is no confirmed outright order in the
+# sample set to check that against, and the one file the rule would call
+# outright (Cosmo Cranes, monthly 0) is a hardware-only replacement rather
+# than an outright deal. Two data points and no counter-example is a guess.
+#
+# So this switch stays off — not as a placeholder for a missing answer, but
+# because the field is filled in by hand today and stays that way (Navtek,
+# Aug 2026). A blank prompts someone to fill it in; a wrong value does not.
 WRITE_ORDER_TYPE = os.environ.get("WRITE_ORDER_TYPE", "false").lower() == "true"
 
 # Testing escape hatch: re-read a file the ledger has already seen instead of
