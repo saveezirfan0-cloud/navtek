@@ -124,8 +124,15 @@ def handle_webhook(payload, monday=None, store=None):
     # either misconfiguration or someone probing the public endpoint — both
     # end here, before any monday call is made.
     if board_id != config.ORDERS_BOARD_ID:
-        return {"ok": False,
-                "reason": f"event names board {board_id}, not the orders board"}
+        # Not stamped on the row: this item is on a board this app does not
+        # own, and writing a status there would be worse than saying nothing.
+        # Logged, though — a silent return is what "nothing happened" looks
+        # like, and the delivery log is where that question gets answered.
+        outcome = {"ok": False, "item_id": item_id, "board_id": board_id,
+                   "reported": True,
+                   "reason": f"event names board {board_id}, not the orders board"}
+        _log_webhook(store, outcome, started)
+        return outcome
 
     result = {"item_id": item_id, "board_id": board_id}
 
@@ -136,8 +143,10 @@ def handle_webhook(payload, monday=None, store=None):
     # doesn't retry. Fails open when the database can't answer.
     delivery_key = _delivery_key(event)
     if delivery_key and not store.claim_delivery(delivery_key):
-        return {**result, "ok": True,
-                "skipped": "duplicate webhook delivery — already being processed"}
+        outcome = {**result, "ok": True,
+                   "skipped": "duplicate webhook delivery — already being processed"}
+        _log_webhook(store, outcome, started)
+        return outcome
 
     try:
         outcome = _run(monday, store, payload, result, started)
@@ -148,7 +157,14 @@ def handle_webhook(payload, monday=None, store=None):
         detail = f"{type(exc).__name__}: {exc}"
         _fail(monday, board_id, item_id,
               f"Something went wrong reading this eOrder.<br>{detail}")
-        outcome = {**result, "ok": False, "reason": detail}
+        outcome = {**result, "ok": False, "reason": detail, "reported": True}
+
+    # The backstop. Every failure above reports itself on the row, but "every"
+    # is a claim that decays: a future early return that forgets leaves a row
+    # that looks exactly like one nobody touched, which is the single hardest
+    # state to diagnose from the board. So the guarantee is enforced here,
+    # once, rather than trusted to each path.
+    _ensure_failure_visible(monday, board_id, item_id, outcome)
 
     _log_webhook(store, outcome, started)
 
@@ -161,6 +177,30 @@ def handle_webhook(payload, monday=None, store=None):
     except Exception:  # noqa: BLE001
         traceback.print_exc()
 
+    return outcome
+
+
+def _ensure_failure_visible(monday, board_id, item_id, outcome):
+    """Guarantee that a failed ingest is legible on the row itself.
+
+    Damon's rule from the sandbox: "a crash that writes nothing looks identical
+    to a job nobody touched". The row is the only surface the person who
+    dropped the file is looking at, and an unstamped row asks them to guess
+    between "the automation is broken", "the automation never fired" and
+    "nothing was wrong". Any outcome that failed without already reporting
+    itself gets ❌ Failed and an Update saying why.
+
+    `reported` is set by the paths that call _fail themselves, so this cannot
+    double-post an Update on them. Best-effort throughout: _fail already
+    swallows, and the backstop must never turn a failure into an exception.
+    """
+    if outcome.get("ok") or outcome.get("reported") or not item_id:
+        return outcome
+    reason = outcome.get("reason") or "no reason recorded"
+    _fail(monday, board_id, item_id,
+          f"The eOrder could not be read, and the step that failed did not "
+          f"say so on this row.<br>{reason}")
+    outcome["reported"] = True
     return outcome
 
 
@@ -216,8 +256,11 @@ def _run(monday, store, payload, result, started):
 
     file_column = cols.get("eorder_file") or event.get("columnId")
     if not file_column:
-        return {**result, "ok": False,
-                "reason": "no file column called 'eOrder' on this board"}
+        reason = "no file column called 'eOrder' on this board"
+        _fail(monday, board_id, item_id,
+              "This board has no file column called <b>eOrder</b>, so there is "
+              "nothing to read. Run setup step 2 to create it.", cols)
+        return {**result, "ok": False, "reason": reason, "reported": True}
 
     # Ignore removals.
     #
@@ -247,7 +290,7 @@ def _run(monday, store, payload, result, started):
 
     except Exception as exc:  # noqa: BLE001 - report every failure to the user
         _fail(monday, board_id, item_id, f"Could not fetch the file: {exc}", cols)
-        return {**result, "ok": False, "reason": str(exc)}
+        return {**result, "ok": False, "reason": str(exc), "reported": True}
 
     # --- parse ---------------------------------------------------------
     try:
@@ -266,7 +309,7 @@ def _run(monday, store, payload, result, started):
             status="failed", error=detail,
             duration_ms=int((time.time() - started) * 1000),
         )
-        return {**result, "ok": False, "reason": detail}
+        return {**result, "ok": False, "reason": detail, "reported": True}
 
     opportunity_id = parsed.get("opportunity_id")
     result["opportunity_id"] = opportunity_id
@@ -277,7 +320,8 @@ def _run(monday, store, payload, result, started):
             "No OPPORTUNITY ID in this file, so it cannot be matched to an "
             "order. Nothing else on the row was changed.", cols,
         )
-        return {**result, "ok": False, "reason": "no opportunity_id"}
+        return {**result, "ok": False, "reason": "no opportunity_id",
+                "reported": True}
 
     # --- find the real row ----------------------------------------------
     #
@@ -353,7 +397,14 @@ def _run(monday, store, payload, result, started):
 
     proposed = mapping.to_column_values(parsed, cols, installer_item_ids=installer_ids)
     # A revised eOrder is allowed to correct fields; a first read only fills gaps.
-    values = proposed if changes else mapping.merge_preserving(proposed, existing_text)
+    #
+    # A deliberate re-read (ALLOW_DUPLICATE_FILES) corrects them too. Without
+    # this it could not: re-dropping the same file produces no `changes` — the
+    # parse is identical — so every proposed value was filtered out again by
+    # merge_preserving and a column holding a wrong value kept it forever. That
+    # made the testing escape hatch unable to fix the thing it exists to fix.
+    force = bool(changes or result.get("duplicate_reread"))
+    values = proposed if force else mapping.merge_preserving(proposed, existing_text)
 
     # Align every status label to the board's real label list. One label the
     # board doesn't have would fail the whole mutation — every field lost over
@@ -673,13 +724,24 @@ def _fail(monday, board_id, item_id, message, cols=None):
             try:
                 labels = columns_mod.status_labels(monday, board_id)
                 values, _ = mapping.align_status_values(values, labels)
-            except Exception:  # noqa: BLE001 - write unaligned rather than not at all
+            except Exception:  # noqa: BLE001 - fall through to the retry below
                 pass
             try:
                 if values:
                     monday.set_columns(board_id, item_id, values)
-            except Exception:  # noqa: BLE001 - the Update below must still post
-                traceback.print_exc()
+            except Exception:  # noqa: BLE001
+                # An unaligned "❌ Failed" against a board whose label is the
+                # emoji-stripped "Failed" is refused wholesale — which left the
+                # failure with no stamp at all, exactly the silent row this
+                # function exists to prevent. Reaching here means alignment was
+                # unavailable (the board could not be read) or wrong, and the
+                # status matters more than label hygiene, so let monday add the
+                # label. Same deliberate exception _mark_duplicate makes.
+                try:
+                    monday.set_columns(board_id, item_id, values,
+                                       create_labels_if_missing=True)
+                except Exception:  # noqa: BLE001 - the Update below must still post
+                    traceback.print_exc()
         monday.post_update(item_id, f"❌ <b>Could not read eOrder</b><br>{message}")
     except Exception:  # noqa: BLE001 - reporting must not raise
         traceback.print_exc()

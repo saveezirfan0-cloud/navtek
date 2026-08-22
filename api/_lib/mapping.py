@@ -69,6 +69,18 @@ def _is_blank(value):
     return value is None or (isinstance(value, str) and not value.strip())
 
 
+def _nonzero(value):
+    """None for a numeric zero, the value otherwise.
+
+    For the money columns, where 0 and "not stated" are the same cell in the
+    eOrder but very different claims on the board.
+    """
+    try:
+        return None if float(value) == 0 else value
+    except (TypeError, ValueError):
+        return value
+
+
 # --------------------------------------------------------------------------
 # monday value encoders — one per column type
 # --------------------------------------------------------------------------
@@ -380,7 +392,14 @@ def to_column_values(parsed, columns=None, installer_item_ids=None):
     put("platform", v_status(_get(parsed, "platform")))
     put("migration_required", v_status(_get(parsed, "migration_required")))
     put("order_date", v_date(_get(parsed, "order_date")))
-    put("dealer_commission", v_number(_get(parsed, "dealer_commission")))
+    # A zero commission is written as blank, not as 0.
+    #
+    # Same reasoning as ACV below: the eOrder leaves the cell empty when the
+    # figure isn't known yet, and the parser reports that as 0. Writing 0 turns
+    # "nobody has told us" into "the commission is nil" — a real measurement
+    # that reads as a settled fact on the board and drags any total or average
+    # taken over the column. Blank is the honest rendering of unknown.
+    put("dealer_commission", v_number(_nonzero(_get(parsed, "dealer_commission"))))
     put("install_value", v_number(_get(parsed, "install_value")))
 
     # ACV is only written for new-revenue order reasons. The parser returns None

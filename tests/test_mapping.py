@@ -647,3 +647,22 @@ def test_diag_agrees_with_the_app_about_what_is_set():
     assert diag._actually_set('""') is False      # quoted-empty paste
     assert diag._actually_set("  ") is False      # whitespace-only paste
     assert diag._actually_set(None) is False
+
+
+# -- money columns: 0 is "not stated", not "nil" (sandbox feedback, 22 Aug) --
+
+def test_a_zero_dealer_commission_is_left_blank_not_written_as_zero():
+    """The eOrder leaves the cell empty when the figure isn't known and the
+    parser reports 0. Writing 0 states a nil commission as settled fact and
+    drags any average taken over the column."""
+    cols = {"dealer_commission": "numeric_comm", "acv": "numeric_acv"}
+    values = mapping.to_column_values(
+        {"opportunity_id": "X", "company": "Y", "dealer_commission": 0}, cols)
+    assert "numeric_comm" not in values
+
+
+def test_a_real_dealer_commission_is_still_written():
+    cols = {"dealer_commission": "numeric_comm"}
+    values = mapping.to_column_values(
+        {"opportunity_id": "X", "company": "Y", "dealer_commission": 3366.9}, cols)
+    assert values["numeric_comm"] == "3366.9"

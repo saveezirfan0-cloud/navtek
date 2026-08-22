@@ -957,3 +957,90 @@ def test_multi_site_subitems_carry_their_fields_on_their_own_board(monkeypatch):
     assert named["Site Address"] == "1 Alpha St, Sydney"
     assert named["Units Total"] == "4"
     assert named["Site Phone"]["phone"] == "+61400000001"
+
+
+# -- every failure is visible on the row (sandbox feedback, 22 Aug) ----------
+#
+# "A crash that writes nothing looks identical to a job nobody touched."
+
+def test_a_failure_that_reports_nothing_still_stamps_the_row(monkeypatch):
+    """The backstop. A path that returns ok:False without saying so on the
+    row must still leave ❌ Failed and an Update behind."""
+    monkeypatch.setattr(ingest, "_run",
+                        lambda *a, **k: {"ok": False, "reason": "boom"})
+    result, monday, _ = run(KANE)
+    assert result["ok"] is False
+    assert monday.written["color_status"] == {"label": "Failed"}
+    assert any("boom" in body for body in monday.updates)
+
+
+def test_the_backstop_does_not_double_report_a_path_that_already_did():
+    """A parse failure reports itself; the backstop must stay out of its way
+    rather than posting a second Update on the same row."""
+    monday = FakeMonday(b"this is not a spreadsheet")
+    result, monday, _ = run(KANE, monday=monday)
+    assert result["ok"] is False
+    assert len([b for b in monday.updates if "Could not read eOrder" in b]) == 1
+
+
+def test_a_board_with_no_eorder_column_says_so_on_the_row(monkeypatch):
+    """Previously this returned quietly and the row showed nothing at all."""
+    monkeypatch.setattr(columns_mod, "resolved",
+                        lambda *a, **k: {"eorder_status": "color_status"})
+    result, monday, _ = run(KANE)
+    assert result["ok"] is False
+    assert "no file column" in result["reason"]
+    # Stamped either way: with the board unreadable the label cannot be
+    # aligned, and _fail lets monday add it rather than leaving the row blank.
+    assert monday.written["color_status"]["label"] in ("Failed", "❌ Failed")
+    assert any("eOrder" in body for body in monday.updates)
+
+
+def test_a_failed_stamp_lands_even_when_the_label_cannot_be_aligned(monkeypatch):
+    """The emoji-stripping incident again, on the failure path: an unaligned
+    "❌ Failed" is refused wholesale by a board whose label is "Failed", which
+    left the row with no stamp at all — the silent row _fail exists to stop."""
+    monkeypatch.setattr(columns_mod, "status_labels",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no board")))
+    monday = FakeMonday(b"this is not a spreadsheet")
+    result, monday, _ = run(KANE, monday=monday)
+    assert result["ok"] is False
+    assert monday.written["color_status"]["label"] in ("Failed", "❌ Failed")
+
+
+def test_a_delivery_for_another_board_is_logged_rather_than_vanishing():
+    """Not stamped — it is not our board — but never silent either."""
+    monday = FakeMonday(blob(KANE))
+    store = FakeStore()
+    config.ORDERS_BOARD_ID = BOARD_ID
+    result = ingest.handle_webhook(
+        {"event": {"pulseId": 123, "boardId": 999}}, monday, store)
+    assert result["ok"] is False
+    assert store.webhooks, "the delivery log is how a silent return is found"
+    assert "not the orders board" in store.webhooks[-1]["reason"]
+    assert monday.written == {}
+
+
+# -- a deliberate re-read corrects wrong values (sandbox feedback) -----------
+
+def test_a_forced_reread_corrects_a_wrong_value_it_previously_wrote(monkeypatch):
+    """merge_preserving protects human edits, but it also froze the app's own
+    bad writes: re-dropping the same file produced no diff, so every value was
+    filtered out again and a wrong column stayed wrong forever."""
+    monkeypatch.setattr(config, "ALLOW_DUPLICATE_FILES", True)
+    store = FakeStore()
+    run(KANE, store=store)
+
+    # The board now holds a wrong unit count where the eOrder says 44.
+    monday = FakeMonday(blob(KANE), existing_values={"numeric_units": "2.0"})
+    result, monday, _ = run(KANE, store=store, monday=monday)
+    assert result["ok"]
+    assert result.get("duplicate_reread") is True
+    assert monday.written["numeric_units"] == "44"
+
+
+def test_an_ordinary_first_read_still_leaves_a_human_edit_alone():
+    monday = FakeMonday(blob(KANE), existing_values={"text_contact": "Someone Else"})
+    result, monday, _ = run(KANE, monday=monday)
+    assert result["ok"]
+    assert "text_contact" not in monday.written
