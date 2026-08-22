@@ -250,7 +250,8 @@ without clobbering existing monday values.
 | | |
 |---|---|
 | `MONDAY_ACCOUNT_SLUG` | `https://<slug>.monday.com` — set it and every item id in the app becomes a link to its board row. Unset, plain text. |
-| `MONDAY_SIGNING_SECRET` | monday app → Basic Information → Signing Secret. Set it and the webhook endpoints verify monday's JWT signature; unsigned posts are turned away. Unset, /health carries a warning. |
+| `MONDAY_SIGNING_SECRET` | monday app → Basic Information → Signing Secret. Verifies monday's JWT on deliveries that carry one — which only happens for webhooks created through an app's **OAuth token**. The ones setup step 4 creates use the personal API token and arrive unsigned, so this alone hardens nothing; `WEBHOOK_SECRET` is what /health asks for. |
+| `MONDAY_SIGNING_REQUIRED` | `true` makes an unsigned delivery a rejection rather than letting it through. Only correct once every webhook is OAuth-registered — otherwise it drops all of them. |
 | `LOG_RETENTION_DAYS` | How long `webhook_log` and `portal_events` are kept (default 180; 0 = keep forever). Purged by the daily sweep. The notification ledger is never purged — its uniqueness IS the dedup. |
 | `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` | Set all three and `sms.py` sends real texts through Twilio (`TWILIO_MESSAGING_SERVICE_SID` works in place of `TWILIO_FROM`). Unset, the logging stub runs. |
 | `RESEND_API_KEY` + `EMAIL_FROM` | Set both and `emailer.py` sends the ⚠️ Check / ❌ Failed alert emails through Resend, to the recipients saved on `/settings` (`supabase/migrations/0007_app_settings.sql`). `SMTP_HOST` (+ `SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`) with `EMAIL_FROM` sends over SMTP instead. Unset, the logging stub runs. One email per (order, file, status) — claimed in the notifications ledger, so retry storms can't flood an inbox. |

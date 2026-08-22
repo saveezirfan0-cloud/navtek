@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
  * narrow the whole log, not the page that happened to load. */
 
 const PAGE_SIZE = 25;
-const OUTCOMES = ["processed", "skipped", "failed"] as const;
+const OUTCOMES = ["processed", "skipped", "failed", "rejected"] as const;
 
 export default async function DeliveriesPage({
   searchParams,
@@ -120,7 +120,13 @@ export default async function DeliveriesPage({
                       className={`chip-btn ${outcome === o ? "on" : ""}`}
                       href={href({ outcome: o })}
                     >
-                      {o === "processed" ? "Processed" : o === "skipped" ? "Skipped" : "Failed"}
+                      {o === "processed"
+                        ? "Processed"
+                        : o === "skipped"
+                          ? "Skipped"
+                          : o === "failed"
+                            ? "Failed"
+                            : "Rejected"}
                     </Link>
                   ))}
                 </div>

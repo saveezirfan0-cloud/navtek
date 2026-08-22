@@ -167,12 +167,17 @@ export type DbState = { ok: boolean; state: string; detail?: string };
 
 /** One webhook delivery from monday, whatever came of it. monday's own
  * automation log shows all of these as Success; this is where a skipped
- * duplicate or a no-file delivery becomes visible. */
+ * duplicate, a no-file delivery, or a delivery we refused becomes visible.
+ *
+ * "rejected" means a secret didn't match, so the delivery was dropped without
+ * being acted on. It is answered 200 rather than 401 on purpose — monday
+ * deactivates an automation whose endpoint returns an auth error — which makes
+ * this log the only place a mismatched secret is visible. */
 export type WebhookRun = {
   monday_item_id: number | null;
   opportunity_id: string | null;
   file_name: string | null;
-  outcome: "processed" | "skipped" | "failed";
+  outcome: "processed" | "skipped" | "failed" | "rejected";
   reason: string | null;
   status: string | null;
   duration_ms: number | null;

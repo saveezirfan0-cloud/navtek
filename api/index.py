@@ -100,13 +100,25 @@ def health(fresh: bool = Query(default=False)):
         "ok": not config.missing_secrets() and not config.CONFIG_WARNINGS,
         "missing_secrets": config.missing_secrets(),
         # Import-time warnings, plus posture the environment decides at run
-        # time: with neither webhook lock set, anyone who finds the URL can
-        # hand the automation a payload — worth a banner, not a silent default.
+        # time: with no webhook lock set, anyone who finds the URL can hand the
+        # automation a payload — worth a banner, not a silent default.
+        #
+        # The recommendation is WEBHOOK_SECRET, not MONDAY_SIGNING_SECRET.
+        # monday only signs webhooks created through an app's OAuth token, and
+        # ours are created with a personal API token, so a signing secret
+        # verifies nothing on its own — see config.MONDAY_SIGNING_SECRET.
         "config_warnings": config.CONFIG_WARNINGS + (
-            [] if (config.WEBHOOK_SECRET or config.MONDAY_SIGNING_SECRET) else
+            [] if config.WEBHOOK_SECRET else
             ["The webhook endpoints accept unauthenticated calls. Set "
-             "MONDAY_SIGNING_SECRET (monday app → Basic Information → Signing "
-             "Secret) so only monday can drive them."]
+             "WEBHOOK_SECRET to a long random string and re-run setup step 4 "
+             "so the registered URL carries it."]
+        ) + (
+            ["MONDAY_SIGNING_SECRET is set, but monday only signs webhooks "
+             "created through an app's OAuth token. If these were registered "
+             "with a personal API token they arrive unsigned and this secret "
+             "verifies nothing — WEBHOOK_SECRET is the lock doing the work."]
+            if config.MONDAY_SIGNING_SECRET and not config.MONDAY_SIGNING_REQUIRED
+            else []
         ),
         "database": Store().ping(),
         "unmapped_columns": columns_mod.unmapped(cols),
@@ -122,6 +134,7 @@ def health(fresh: bool = Query(default=False)):
         "webhook_hardening": {
             "hook_token": bool(config.WEBHOOK_SECRET),
             "signature": bool(config.MONDAY_SIGNING_SECRET),
+            "signature_required": bool(config.MONDAY_SIGNING_REQUIRED),
         },
         "sla": {
             "go_live_date": (config.sla_go_live() or None)
@@ -171,41 +184,119 @@ def _monday_signature_ok(authorization):
     return _hmac.compare_digest(expected, got)
 
 
-def _webhook_guard(request):
-    """The webhook endpoints are reachable from the open internet and drive
-    monday writes with the account-wide token, so two independent locks:
+def _webhook_rejection(request, payload):
+    """Why this delivery must not be acted on, or None to carry on.
 
-    * WEBHOOK_SECRET — the registered URL carries it as ?hook=…; anything
-      without it is turned away.
-    * MONDAY_SIGNING_SECRET — monday signs every delivery (challenge
-      handshake included) as a JWT in Authorization; with the secret set,
-      an unsigned or mis-signed POST is turned away even if it knows the
-      URL and the ?hook= token.
+    Two independent locks, and neither may ever answer monday with a 4xx —
+    see _accept_webhook for why.
 
-    Neither set means the endpoints run open, which /health reports as a
+    * WEBHOOK_SECRET — the registered URL carries it as ?hook=…. Our own
+      registration always attaches it (bootstrap.register_flow_webhooks), so a
+      mismatch means a hand-registered URL, a rotated secret nobody re-ran
+      setup step 4 for, or someone who guessed the path.
+    * MONDAY_SIGNING_SECRET — verifies the HS256 JWT monday puts in
+      Authorization. monday only signs webhooks created through an app's OAuth
+      token; one created with a personal API token (what bootstrap does)
+      arrives with no Authorization header at all. So an *absent* signature is
+      normal and is allowed through, and only a signature that is present and
+      wrong is a rejection — unless MONDAY_SIGNING_REQUIRED says the webhooks
+      really are OAuth-registered, in which case unsigned is a rejection too.
+
+    With no WEBHOOK_SECRET the endpoints run open, which /health reports as a
     warning rather than silently accepting.
     """
-    if config.WEBHOOK_SECRET:
-        import hmac as _hmac
+    import hmac as _hmac
 
-        if not _hmac.compare_digest(
-            request.query_params.get("hook", ""), config.WEBHOOK_SECRET
-        ):
-            raise HTTPException(401, "bad webhook token")
-    if config.MONDAY_SIGNING_SECRET:
-        if not _monday_signature_ok(request.headers.get("authorization", "")):
-            raise HTTPException(401, "bad webhook signature")
+    if config.WEBHOOK_SECRET and not _hmac.compare_digest(
+        request.query_params.get("hook", ""), config.WEBHOOK_SECRET
+    ):
+        return "?hook= token does not match WEBHOOK_SECRET"
+
+    if not config.MONDAY_SIGNING_SECRET:
+        return None
+
+    # The registration handshake is never gated on a signature. monday replays
+    # it to re-verify a live webhook, and a webhook registered with a personal
+    # token has nothing to sign it — refusing the handshake is precisely how
+    # the automation gets deactivated.
+    if "challenge" in payload:
+        return None
+
+    authorization = (request.headers.get("authorization") or "").strip()
+    if not authorization:
+        if config.MONDAY_SIGNING_REQUIRED:
+            return ("unsigned delivery while MONDAY_SIGNING_REQUIRED is set — "
+                    "is this webhook registered through an app's OAuth token?")
+        return None
+    if not _monday_signature_ok(authorization):
+        return "Authorization JWT does not verify against MONDAY_SIGNING_SECRET"
+    return None
+
+
+def _log_rejection(payload, reason):
+    """A dropped delivery is invisible unless something records it.
+
+    Answering 200 is what stops monday deactivating the automation, but it also
+    means monday's own log can no longer be where a rejection shows up — so it
+    shows up here, on /deliveries. Swallowed like every other ledger write: the
+    log must never cost a request.
+    """
+    event = payload.get("event") or {}
+    try:
+        Store().record_webhook(
+            monday_item_id=event.get("pulseId"),
+            monday_board_id=event.get("boardId"),
+            outcome="rejected",
+            reason=reason,
+        )
+    except Exception:  # noqa: BLE001 - the log must never cost the request
+        pass
+
+
+async def _accept_webhook(request):
+    """Read one monday delivery and decide whether to act on it.
+
+    Returns (payload, None) to go ahead, or (None, response) to send `response`
+    and stop — the registration handshake's echo, or a drop.
+
+    A rejected delivery is dropped with 200, never a 4xx. monday deactivates a
+    webhook automation whose endpoint answers with an authentication error, and
+    that deactivation is silent until an email turns up days later. A secret
+    that doesn't match has to cost us one delivery, not the integration —
+    the same reasoning that already makes a failed ingest return 200.
+    """
+    # A body we cannot read is still answered 200. An unparseable or non-object
+    # payload would otherwise reach handle_webhook's payload.get and 500 — and
+    # a 500 is a non-2xx like any other, which is the thing we are avoiding.
+    try:
+        payload = await request.json()
+    except Exception:  # noqa: BLE001 - a body we cannot read is not a delivery
+        return None, JSONResponse({"ok": False, "reason": "body is not JSON"},
+                                  status_code=200)
+    if not isinstance(payload, dict):
+        return None, JSONResponse(
+            {"ok": False, "reason": "webhook payload is not a JSON object"},
+            status_code=200)
+
+    reason = _webhook_rejection(request, payload)
+    if reason:
+        _log_rejection(payload, reason)
+        return None, JSONResponse({"ok": False, "rejected": reason},
+                                  status_code=200)
+
+    # monday's webhook handshake: echo the challenge on registration.
+    if "challenge" in payload:
+        return None, JSONResponse({"challenge": payload["challenge"]},
+                                  status_code=200)
+
+    return payload, None
 
 
 @app.post("/api/py/eorder")
 async def eorder(request: Request):
-    _webhook_guard(request)
-
-    payload = await request.json()
-
-    # monday's webhook handshake: echo the challenge on registration.
-    if "challenge" in payload:
-        return {"challenge": payload["challenge"]}
+    payload, early = await _accept_webhook(request)
+    if early is not None:
+        return early
 
     result = handle_webhook(payload)
     # Always 200, even when the ingest failed.
@@ -242,10 +333,9 @@ async def parse_endpoint(request: Request):
 @app.post("/api/py/installer-change")
 async def installer_change(request: Request):
     """monday webhook on the Installer column — reallocation (prompt 4)."""
-    _webhook_guard(request)
-    payload = await request.json()
-    if "challenge" in payload:
-        return {"challenge": payload["challenge"]}
+    payload, early = await _accept_webhook(request)
+    if early is not None:
+        return early
     try:
         result = notify.handle_installer_change(Monday(), Store(), payload)
     except Exception as exc:  # noqa: BLE001 - 200 always, monday must not retry-storm
@@ -263,10 +353,9 @@ async def installer_account_change(request: Request):
     link. Every step is idempotent, so monday's retries — and the delivery
     our own token write triggers — are free.
     """
-    _webhook_guard(request)
-    payload = await request.json()
-    if "challenge" in payload:
-        return {"challenge": payload["challenge"]}
+    payload, early = await _accept_webhook(request)
+    if early is not None:
+        return early
     try:
         result = onboarding.handle_account_event(Monday(), Store(), payload)
     except Exception as exc:  # noqa: BLE001 - 200 always, monday must not retry-storm
@@ -282,10 +371,9 @@ async def portal_refresh(request: Request):
     date arriving is one half of the SMS rule — re-evaluates the allocation
     trigger. Both halves are idempotent, so duplicate deliveries are free.
     """
-    _webhook_guard(request)
-    payload = await request.json()
-    if "challenge" in payload:
-        return {"challenge": payload["challenge"]}
+    payload, early = await _accept_webhook(request)
+    if early is not None:
+        return early
     item_id = (payload.get("event") or {}).get("pulseId")
     if not item_id:
         return JSONResponse({"ok": False, "reason": "no pulseId"}, status_code=200)

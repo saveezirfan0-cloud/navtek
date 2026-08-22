@@ -99,13 +99,26 @@ CRON_SECRET = os.environ.get("CRON_SECRET", "")
 # re-run setup step 4 so the registration picks it up.
 WEBHOOK_SECRET = _clean_secret(os.environ.get("WEBHOOK_SECRET", ""))
 
-# Stronger webhook hardening: monday signs every webhook delivery with the
-# app's Signing Secret as an HS256 JWT in the Authorization header. When this
-# is set, the webhook endpoints verify that signature and turn away anything
-# unsigned — a forged POST can no longer drive monday writes even if it knows
-# the URL and the ?hook= token. Copy it from monday's Developer Center
-# (your app → Basic Information → Signing Secret).
+# Optional second lock, and NOT a substitute for WEBHOOK_SECRET.
+#
+# monday signs a webhook delivery with an HS256 JWT in the Authorization header
+# ONLY when the webhook was created through an app's OAuth token. A webhook
+# created with a personal API token — which is what bootstrap.py does — arrives
+# with no Authorization header at all, so there is nothing for this secret to
+# verify. Setting it does not harden those deliveries; it only verifies the
+# ones that do turn up signed.
+#
+# Copy it from monday's Developer Center (your app → Basic Information →
+# Signing Secret) once such an app exists. Until then, WEBHOOK_SECRET is the
+# lock that actually does something.
 MONDAY_SIGNING_SECRET = _clean_secret(os.environ.get("MONDAY_SIGNING_SECRET", ""))
+
+# Turn the above into a real requirement: an unsigned delivery is dropped
+# rather than allowed through. Only switch this on once every webhook really is
+# registered through an app's OAuth token — with personal-token webhooks it
+# drops every delivery, which is the whole reason the default is off.
+MONDAY_SIGNING_REQUIRED = (os.environ.get("MONDAY_SIGNING_REQUIRED", "")
+                           .strip().lower() in ("1", "true", "yes", "on"))
 
 # The monday account's slug (https://<slug>.monday.com/…), used only to build
 # links from the dashboard straight to board rows. Optional: unset, item ids

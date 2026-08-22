@@ -1,10 +1,13 @@
-"""Webhook signature verification and the paginated read ledger.
+"""Webhook admission control and the paginated read ledger.
 
 The webhook endpoints are reachable from the open internet and drive monday
-writes with the account-wide token; with MONDAY_SIGNING_SECRET set, only a
-delivery monday actually signed may get in. And /recent's filters must reach
-the query — a search that only covers the loaded page is the bug these
-replaced.
+writes with the account-wide token. Two locks guard them, and the rule that
+outranks both: never answer monday with a 4xx. monday deactivates a webhook
+automation whose endpoint returns an authentication error, so a mismatched
+secret has to cost one delivery, not the integration — which is what happened
+when MONDAY_SIGNING_SECRET was set against personal-token webhooks that monday
+never signs. And /recent's filters must reach the query — a search that only
+covers the loaded page is the bug these replaced.
 """
 
 import base64
@@ -51,6 +54,23 @@ def _jwt(secret: str) -> str:
     return f"{head}.{body}.{sig}"
 
 
+class RejectionLog:
+    """Stands in for the delivery log so a drop can be asserted on."""
+
+    def __init__(self):
+        self.rows = []
+
+    def record_webhook(self, **fields):
+        self.rows.append(fields)
+        return []
+
+
+def _catch_rejections(monkeypatch):
+    log = RejectionLog()
+    monkeypatch.setattr(_module, "Store", lambda: log)
+    return log
+
+
 def test_a_signed_delivery_gets_in(monkeypatch):
     monkeypatch.setattr(_module.config, "MONDAY_SIGNING_SECRET", "sign-me")
     monkeypatch.setattr(_module, "handle_webhook", lambda payload: {"ok": True})
@@ -62,28 +82,114 @@ def test_a_signed_delivery_gets_in(monkeypatch):
     assert response.json()["ok"] is True
 
 
-def test_an_unsigned_or_missigned_delivery_is_turned_away(monkeypatch):
+def test_an_unsigned_delivery_gets_in_because_monday_never_signed_it(monkeypatch):
+    """The regression this file exists for.
+
+    monday only signs webhooks created through an app's OAuth token. Ours are
+    created with the personal API token, so every real delivery arrives with no
+    Authorization header — and rejecting those is what got the automation
+    deactivated. Absent is normal; only present-and-wrong is a rejection.
+    """
     monkeypatch.setattr(_module.config, "MONDAY_SIGNING_SECRET", "sign-me")
+    monkeypatch.setattr(_module.config, "MONDAY_SIGNING_REQUIRED", False)
+    log = _catch_rejections(monkeypatch)
+    monkeypatch.setattr(_module, "handle_webhook", lambda payload: {"ok": True})
+    response = client().post("/api/py/eorder", json={"event": {"pulseId": 1}})
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert log.rows == []
+
+
+def test_a_missigned_delivery_is_dropped_with_200_not_401(monkeypatch):
+    """A wrong signature costs the delivery. It must not cost the automation:
+    monday deactivates an endpoint that answers an auth error."""
+    monkeypatch.setattr(_module.config, "MONDAY_SIGNING_SECRET", "sign-me")
+    log = _catch_rejections(monkeypatch)
     calls = []
     monkeypatch.setattr(_module, "handle_webhook",
                         lambda payload: calls.append(payload))
-    for headers in ({}, {"Authorization": _jwt("some-other-secret")},
+    for headers in ({"Authorization": _jwt("some-other-secret")},
                     {"Authorization": "Bearer garbage"}):
         response = client().post("/api/py/eorder",
                                  json={"event": {"pulseId": 1}}, headers=headers)
-        assert response.status_code == 401
+        assert response.status_code == 200
+        assert response.json()["ok"] is False
     assert calls == []
+    assert [r["outcome"] for r in log.rows] == ["rejected", "rejected"]
 
 
-def test_the_challenge_handshake_is_signed_too(monkeypatch):
-    """monday signs the registration challenge like any delivery — an
-    unsigned challenge must not be echoed, or registration proves nothing."""
+def test_signing_required_turns_unsigned_back_into_a_rejection(monkeypatch):
+    """The opt-in for an account that really is on OAuth — still a 200."""
     monkeypatch.setattr(_module.config, "MONDAY_SIGNING_SECRET", "sign-me")
-    ok = client().post("/api/py/eorder", json={"challenge": "abc"},
-                       headers={"Authorization": _jwt("sign-me")})
-    assert ok.json() == {"challenge": "abc"}
-    bad = client().post("/api/py/eorder", json={"challenge": "abc"})
-    assert bad.status_code == 401
+    monkeypatch.setattr(_module.config, "MONDAY_SIGNING_REQUIRED", True)
+    log = _catch_rejections(monkeypatch)
+    calls = []
+    monkeypatch.setattr(_module, "handle_webhook",
+                        lambda payload: calls.append(payload))
+    response = client().post("/api/py/eorder", json={"event": {"pulseId": 1}})
+    assert response.status_code == 200
+    assert calls == []
+    assert log.rows[0]["outcome"] == "rejected"
+
+
+def test_the_challenge_handshake_is_never_gated_on_a_signature(monkeypatch):
+    """monday replays the handshake to re-verify a live webhook, and a
+    personal-token webhook has nothing to sign it. Refusing the handshake is
+    how registration breaks and the automation gets switched off."""
+    monkeypatch.setattr(_module.config, "MONDAY_SIGNING_SECRET", "sign-me")
+    monkeypatch.setattr(_module.config, "MONDAY_SIGNING_REQUIRED", True)
+    _catch_rejections(monkeypatch)
+    for headers in ({}, {"Authorization": _jwt("sign-me")},
+                    {"Authorization": "Bearer garbage"}):
+        response = client().post("/api/py/eorder", json={"challenge": "abc"},
+                                 headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"challenge": "abc"}
+
+
+def test_a_bad_hook_token_is_dropped_with_200_and_logged(monkeypatch):
+    monkeypatch.setattr(_module.config, "WEBHOOK_SECRET", "url-token")
+    log = _catch_rejections(monkeypatch)
+    calls = []
+    monkeypatch.setattr(_module, "handle_webhook",
+                        lambda payload: calls.append(payload))
+    response = client().post("/api/py/eorder?hook=wrong",
+                             json={"event": {"pulseId": 1}})
+    assert response.status_code == 200
+    assert calls == []
+    assert log.rows[0]["outcome"] == "rejected"
+
+    ok = client().post("/api/py/eorder?hook=url-token",
+                       json={"event": {"pulseId": 1}})
+    assert ok.status_code == 200
+    assert len(calls) == 1
+
+
+def test_every_webhook_endpoint_refuses_to_answer_with_a_4xx(monkeypatch):
+    """Whatever is wrong, monday must never see an auth error from any of
+    them — one 401 anywhere here is one deactivated automation."""
+    monkeypatch.setattr(_module.config, "WEBHOOK_SECRET", "url-token")
+    monkeypatch.setattr(_module.config, "MONDAY_SIGNING_SECRET", "sign-me")
+    monkeypatch.setattr(_module.config, "MONDAY_SIGNING_REQUIRED", True)
+    _catch_rejections(monkeypatch)
+    for path in ("/api/py/eorder", "/api/py/installer-change",
+                 "/api/py/installer-account-change", "/api/py/portal/refresh"):
+        response = client().post(f"{path}?hook=wrong", json={"event": {"pulseId": 1}})
+        assert response.status_code == 200, path
+
+
+def test_a_body_that_is_not_a_json_object_does_not_500(monkeypatch):
+    """A 500 is a non-2xx too, and monday counts it the same way."""
+    _catch_rejections(monkeypatch)
+    calls = []
+    monkeypatch.setattr(_module, "handle_webhook",
+                        lambda payload: calls.append(payload))
+    for body in (b"{not json", b"[1, 2, 3]", b'"a string"'):
+        response = client().post("/api/py/eorder", content=body,
+                                 headers={"Content-Type": "application/json"})
+        assert response.status_code == 200, body
+        assert response.json()["ok"] is False
+    assert calls == []
 
 
 def test_with_no_signing_secret_behaviour_is_unchanged(monkeypatch):

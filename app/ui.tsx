@@ -11,6 +11,7 @@ const PILL: Record<string, string> = {
   // webhook outcomes
   processed: "p-read",
   skipped: "p-check",
+  rejected: "p-failed",
   // SLA states
   on_track: "p-read",
   due_now: "p-check",
@@ -23,6 +24,7 @@ const PILL_LABEL: Record<string, string> = {
   failed: "Failed",
   processed: "Processed",
   skipped: "Skipped",
+  rejected: "Rejected",
   on_track: "On track",
   due_now: "Due now",
   breached: "Breached",
