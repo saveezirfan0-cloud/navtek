@@ -390,7 +390,9 @@ def to_column_values(parsed, columns=None, installer_item_ids=None):
     if acv is not None:
         put("acv", v_number(acv))
 
-    # Order Type stays untouched until the Rental/Outright rule is confirmed.
+    # Order Type stays untouched: Rental vs Outright is a commercial term of
+    # the deal, not something the eOrder states, so the field is filled in by
+    # hand (see config.WRITE_ORDER_TYPE).
     if config.WRITE_ORDER_TYPE:
         put("order_type", v_status(_get(parsed, "order_reason")))
 

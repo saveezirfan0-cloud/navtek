@@ -208,11 +208,22 @@ logging stub — the SMS provider is a config change in that one module.
 
 ## Decisions baked in
 
-**Order Type is not written.** `WRITE_ORDER_TYPE=false` by default. monday's
-values are compound (`New Business | Rental`) and the eOrder supplies only the
-first half; the Kane Civil file is headed "OUTRIGHT ORDER FORM" while its monday
-row reads `New Business | Rental`, so the form title isn't a usable source (§4).
-A blank prompts someone to fill it in; a wrong value doesn't.
+**Order Type stays a manual field.** `WRITE_ORDER_TYPE=false` — and not as a
+placeholder for a missing answer. Rental vs Outright is a commercial term of
+the deal (rental = the customer pays monthly, outright = they've bought the
+hardware), settled when the order is written and typed into monday by the team
+that writes it. No document carries it: monday's values are compound
+(`New Business | Rental`) and the eOrder supplies only the first half, and the
+Kane Civil file is headed "OUTRIGHT ORDER FORM" while its monday row reads
+`New Business | Rental`, so the form title isn't a usable source either (§4).
+The billing block hints at it — Kane Civil (rental) carries a Total Monthly
+Payment and no one-off hardware charge, while an outright deal bills the
+hardware with no monthly — but the sample set holds no confirmed outright
+order, and the only file that rule would call outright (Cosmo Cranes, monthly
+0) is a hardware-only replacement, not an outright deal. Two data points and
+no counter-example is a guess, so the field keeps being filled in by hand
+(Navtek, Aug 2026). A blank prompts someone to fill it in; a wrong value
+doesn't.
 
 **ACV is a calculation, and stays empty when it doesn't apply.** Never a zero —
 a zero is a real measurement that drags a new-business target average down
@@ -259,7 +270,6 @@ without clobbering existing monday values.
 
 ## Still open
 
-- **Order Type**: where Rental vs Outright comes from. Blocks §4.
 - **An Upsell eOrder** for the sample set. That ACV branch has no test
   exercising it; `verify.py` says so on every run rather than passing quietly.
 - **§8 of the brief** lists the multi-site sample as *Qantas Road Express /

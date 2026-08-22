@@ -148,7 +148,9 @@ def test_acv_stays_empty_on_a_renewal_rather_than_becoming_zero():
     assert "numeric_mm0asnac" not in values
 
 
-def test_order_type_is_not_written_while_the_rule_is_unresolved():
+def test_order_type_is_never_written_because_it_is_a_manual_field():
+    # Rental vs Outright is a commercial term of the deal, not a fact the
+    # eOrder records — Navtek's team types it into monday themselves.
     values = mapping.to_column_values(KANE, {**COLUMNS, "order_type": "order_type9"})
     assert "order_type9" not in values
 

@@ -10,8 +10,9 @@ do next" across features, layout, UI, and the stack itself.
 > detail page, the `/sla` console, Twilio support in `sms.py`, webhook
 > signature verification, log retention, dark mode, responsive card tables,
 > and saved-toasts on `/users`. The exceptions need the business, not code:
-> the Order Type source, the missing Upsell sample, and the two absent sample
-> files (Phase 2, item 6) — plus flipping the new switches
+> the missing Upsell sample and the two absent sample files (Phase 2, item 6);
+> Order Type is answered, and the answer is that it stays manual — plus
+> flipping the new switches
 > (`MONDAY_SIGNING_SECRET`, `MONDAY_ACCOUNT_SLUG`, `TWILIO_*`,
 > `SLA_GO_LIVE_DATE`) in Vercel, which is configuration, not a deploy.
 
@@ -85,9 +86,11 @@ What's missing is engineering hygiene around the stack, not a new stack.
    the `Authorization` header against the signing secret.
 5. **Retention.** `webhook_log` and `portal_events` grow forever. A scheduled
    purge (say, 180 days) keeps pagination fast and the database small.
-6. **Close the brief's open items** — the Order Type source, the missing
-   Upsell sample, the two absent sample files. `verify.py` fails today *by
-   design* to keep them visible; they still need answers from the business.
+6. **Close the brief's open items** — the missing Upsell sample and the two
+   absent sample files. `verify.py` fails today *by design* to keep them
+   visible; they still need answers from the business. (Order Type is closed:
+   Rental vs Outright is a commercial term of the deal, so the field stays
+   manual and `WRITE_ORDER_TYPE` stays false.)
 
 ## Phase 3 — UI and layout polish (as capacity allows)
 

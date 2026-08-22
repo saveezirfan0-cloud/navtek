@@ -242,7 +242,7 @@ left, value on the right, click **Add**.
 | `SUPABASE_SECRET_KEY` | the secret key from 3.3 (`SUPABASE_SERVICE_KEY` also works) |
 | `PORTAL_SHARED_SECRET` | your second random string |
 | `SETUP_KEY` | your first random string |
-| `WRITE_ORDER_TYPE` | `false` |
+| `WRITE_ORDER_TYPE` | `false`. Leave it there — Order Type (Rental vs Outright) is a commercial term of the deal and your team fills it in by hand, so the automation never writes it. |
 | `WEBHOOK_SECRET` | *(optional but recommended)* a third random string. With it set, the monday webhook URL carries a token and the automation rejects anything else that posts to it. Set it before running Setup step 4 — or set it later and run step 4 again. |
 | `CRON_SECRET` | *(optional)* a random string. Vercel sends it with the daily SLA sweep so nothing else can trigger it. |
 | `SLA_GO_LIVE_DATE` | *(leave unset until go-live)* `YYYY-MM-DD`. Only jobs dispatched on or after this date ever enter the SLA sweep — everything older is backlog reconciled by hand. Unset = the sweep is off. |
@@ -605,6 +605,7 @@ remains the manual fallback.
 **Changing the code:** edit the file on GitHub and commit. Vercel redeploys
 within a minute or two, on its own.
 
-**Two things are still undecided**, both explained in the README — the Order
-Type rule, and getting an Upsell eOrder into the sample set.
-`WRITE_ORDER_TYPE` stays `false` until the first is settled.
+**One thing is still outstanding**, explained in the README — getting an
+Upsell eOrder into the sample set. Order Type is settled: Rental vs Outright
+is a commercial term of the deal, so the field stays manual and
+`WRITE_ORDER_TYPE` stays `false`.
