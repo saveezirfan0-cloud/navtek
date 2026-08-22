@@ -71,25 +71,45 @@ def _in_a_month_group(title):
     return any(month.lower() in text for month in MONTHS)
 
 
-def _file_into_month_group(monday, board_id, item_id, existing):
-    """A read order belongs in the current month's group.
+def _order_month(parsed):
+    """The month the ORDER was placed, or None when the date won't parse.
+
+    Not the month the file happened to be read in. Qualityvend's eOrder is
+    dated 4 May; dropped in August it was filed under August, because filing
+    used datetime.now(). That puts an order in whichever month someone got
+    round to the paperwork, which is not what the groups mean.
+    """
+    value = mapping.v_date((parsed or {}).get("order_date"))
+    if value and value.get("date"):
+        try:
+            return datetime.strptime(value["date"], "%Y-%m-%d")
+        except ValueError:
+            pass
+    return None
+
+
+def _file_into_month_group(monday, board_id, item_id, existing, when=None):
+    """A read order belongs in the group for the month it was PLACED.
 
     Rows start out wherever staff created them — "New Opps/Sent DocuSigns" on
     the live board — and were staying there. Once the eOrder is read, the row
     is filed. A row already sitting in ANY month group is left alone: a
     revised eOrder months later must not drag an old order forward. When the
-    month's group doesn't exist yet (the 1st of a new month), it is created
-    with exactly the title staff would give it — leaving the row unfiled
-    every 1st was the worse failure. Filing is best-effort — it must never
-    cost the order.
+    month's group doesn't exist yet, it is created with exactly the title
+    staff would give it — leaving the row unfiled was the worse failure.
+    Filing is best-effort — it must never cost the order.
+
+    `when` is the order date; it falls back to today only when the eOrder
+    carries no readable date, which is the one case where there is nothing
+    better to go on.
     """
     try:
         group = (existing or {}).get("group") or {}
         if _in_a_month_group(group.get("title")):
             return None
-        group_id = current_group_id(monday, board_id, strict=True)
+        when = when or datetime.now()
+        group_id = current_group_id(monday, board_id, when=when, strict=True)
         if not group_id:
-            when = datetime.now()
             group_id = monday.create_group(
                 board_id, f"{MONTHS[when.month - 1]} {when.year}")
         if group_id and group_id != group.get("id"):
@@ -466,7 +486,8 @@ def _run(monday, store, payload, result, started):
 
     # File the row into the current month's group (feedback from the first
     # live drops: rows were staying in "New Opps/Sent DocuSigns").
-    moved = _file_into_month_group(monday, board_id, target_id, existing)
+    moved = _file_into_month_group(monday, board_id, target_id, existing,
+                                   _order_month(parsed))
     if moved:
         result["moved_to_group"] = moved
 

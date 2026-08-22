@@ -802,12 +802,24 @@ def test_phone_lands_with_the_plus_prefix():
     assert monday.written["phone_site"]["phone"] == "+61437353834"
 
 
-def test_a_read_order_is_filed_into_the_current_months_group():
+def test_a_read_order_is_filed_into_the_month_it_was_placed():
     """Rows start out wherever staff created them ("New Opps/Sent DocuSigns")
-    and were staying there."""
-    result, monday, _ = run(KANE)
+    and were staying there.
+
+    The month is the ORDER's, not today's. Kane Civil is dated 2 July 2026, so
+    it belongs in July however long the file sits before someone drops it —
+    filing by datetime.now() put orders in whichever month the paperwork got
+    done, which is not what the groups mean.
+    """
+    class DatedGroups(FakeMonday):
+        def board_groups(self, board_id):
+            return [{"id": "g_docusign", "title": "New Opps/Sent DocuSigns"},
+                    {"id": "g_july", "title": "July 2026"},
+                    {"id": "g_now", "title": "August 2026"}]
+
+    result, monday, _ = run(KANE, monday=DatedGroups(blob(KANE)))
     assert result["ok"]
-    assert monday.moved == (123, "g_month")
+    assert monday.moved == (123, "g_july")
 
 
 def test_an_order_already_in_a_month_group_stays_put():
@@ -829,10 +841,30 @@ def test_the_months_group_is_created_when_the_board_lacks_one():
     monday = NoMonthGroups(blob(KANE))
     result, monday, _ = run(KANE, monday=monday)
     assert result["ok"]
+    # The ORDER's month — Kane Civil is dated 2 July 2026 — not today's.
+    assert monday.groups_created == ["July 2026"]
+    assert monday.moved == (123, "g_created_1")
+
+
+def test_an_eorder_with_no_readable_date_still_gets_filed():
+    """Today's month is the fallback, not the rule: with nothing to go on,
+    an unfiled row is worse than one filed under the read date."""
     from datetime import datetime
+
+    class NoMonthGroups(FakeMonday):
+        def board_groups(self, board_id):
+            return [{"id": "g_docusign", "title": "New Opps/Sent DocuSigns"}]
+
+    monday = NoMonthGroups(blob(KANE))
+    original = ingest._order_month
+    try:
+        ingest._order_month = lambda parsed: None
+        result, monday, _ = run(KANE, monday=monday)
+    finally:
+        ingest._order_month = original
+    assert result["ok"]
     now = datetime.now()
     assert monday.groups_created == [f"{ingest.MONTHS[now.month - 1]} {now.year}"]
-    assert monday.moved == (123, "g_created_1")
 
 
 # -- Setup prepares the install-item field set up front -----------------------
