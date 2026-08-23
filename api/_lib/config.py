@@ -177,6 +177,11 @@ _DEFAULT_COLUMNS = {
     "order_date": "date3",
     "dealer_commission": "total_commission",
     "install_value": "numeric",
+    # What Navtek is paid to organise and manage the install — the eOrder's own
+    # install figure, so the same number as Install Value and separate from
+    # Dealer Commission. No pinned ID: Damon added the column by hand, so it is
+    # resolved by title off the board.
+    "install_commission": None,
     "acv": "numeric_mm0asnac",
     # --- new, created by bootstrap ---
     "eorder_file": None,

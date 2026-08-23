@@ -53,6 +53,13 @@ BOARD_COLUMNS = [
     {"id": "numeric_units", "title": "Units Total", "type": "numbers"},
     {"id": "numeric_acv", "title": "ACV", "type": "numbers"},
     {"id": "numeric_install", "title": "Install Value", "type": "numbers"},
+    {"id": "numeric_installcomm", "title": "Install Commission", "type": "numbers"},
+    # The team's own working status. "6.1 Installer Esc." is FIRST, which is
+    # why every new row inherited it on the live board.
+    {"id": "color_order", "title": "Status", "type": "status",
+     "settings_str": json.dumps(
+         {"labels": {"1": "6.1 Installer Esc.", "2": "Order placed",
+                     "3": "2.0 Booked"}})},
     {"id": "date_order", "title": "Order Date", "type": "date"},
     {"id": "subtasks_1", "title": "Subitems", "type": "subtasks",
      "settings_str": json.dumps({"boardIds": [777]})},
@@ -1076,3 +1083,78 @@ def test_an_ordinary_first_read_still_leaves_a_human_edit_alone():
     result, monday, _ = run(KANE, monday=monday)
     assert result["ok"]
     assert "text_contact" not in monday.written
+
+
+# -- Damon's answers, 22 Aug ------------------------------------------------
+
+def test_install_commission_carries_the_eorders_install_figure():
+    """It is what Navtek is paid to organise the install — the same number as
+    Install Value, which is why it sits apart from Dealer Commission."""
+    result, monday, _ = run(KANE)
+    assert result["ok"]
+    assert monday.written["numeric_installcomm"] == "8000"
+    assert monday.written["numeric_install"] == "8000"
+
+
+def test_a_zero_install_figure_leaves_both_install_columns_blank():
+    """Teletrac Navman sometimes organise the install themselves and nothing
+    is payable to Navtek. Blank says that; 0 asserts a nil fee."""
+    result, monday, _ = run(SOUTHERN)      # Service Only Renewal, install 0
+    assert result["ok"]
+    assert "numeric_installcomm" not in monday.written
+    assert "numeric_install" not in monday.written
+
+
+def test_acv_stays_empty_on_an_order_reason_that_earns_none():
+    """Renewals, changes of ownership and hardware-only carry no ACV — empty,
+    never zero, or the new-business average is dragged down."""
+    result, monday, _ = run(SOUTHERN)
+    assert result["ok"]
+    assert "numeric_acv" not in monday.written
+
+
+def test_the_first_read_stamps_order_placed():
+    """A new row inherits the board's first label — "6.1 Installer Esc." — so
+    every brand new order read as a stalled job."""
+    result, monday, _ = run(KANE)
+    assert result["ok"]
+    assert monday.written["color_order"] == {"label": "Order placed"}
+
+
+def test_a_later_read_never_drags_the_working_status_backwards(monkeypatch):
+    """The team works this column. An order that has moved on to Booked must
+    not be reset by a later eOrder landing on the same order."""
+    monkeypatch.setattr(config, "ALLOW_DUPLICATE_FILES", True)
+    store = FakeStore()
+    run(KANE, store=store)
+    monday = FakeMonday(blob(KANE), existing_values={"color_order": "2.0 Booked"})
+    result, monday, _ = run(KANE, store=store, monday=monday)
+    assert result["ok"]
+    assert "color_order" not in monday.written
+
+
+def test_no_opening_status_when_the_ledger_cannot_prove_it_is_the_first_read():
+    """With the database down we cannot tell first from fifth. A missed
+    opening status is recoverable; one dragged backwards is a job nobody
+    chases."""
+    result, monday, _ = run(KANE, store=FakeStore(broken=True))
+    assert "color_order" not in monday.written
+
+
+def test_install_arranged_by_is_never_written():
+    """Damon owns that column by hand — the eOrder cannot state who arranges
+    the install, and ship-to only says where hardware goes."""
+    class WithArrangedBy(FakeMonday):
+        def board_columns(self, board_id):
+            if str(board_id) == str(SUB_BOARD_ID):
+                return list(self.sub_columns)
+            return BOARD_COLUMNS + [
+                {"id": "color_arranged", "title": "Install Arranged By",
+                 "type": "status", "settings_str": json.dumps({"labels": {
+                     "1": "Navtek organised", "2": "Teletrac Navman organised",
+                     "3": "Customer self-install"}})}]
+
+    result, monday, _ = run(KANE, monday=WithArrangedBy(blob(KANE)))
+    assert result["ok"]
+    assert "color_arranged" not in monday.written
+    assert not any("color_arranged" in v for _, v in monday.written_to)

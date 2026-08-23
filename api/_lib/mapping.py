@@ -52,6 +52,13 @@ from . import config
 # --------------------------------------------------------------------------
 # Status values written to the eOrder Status column
 # --------------------------------------------------------------------------
+# The Order Status a first read stamps. A new row inherits the board's own
+# default label — "6.1 Installer Esc." on the live board — which reads as a
+# stalled job from the moment the order is created. "Order placed" is what has
+# actually happened: the order was placed on the Teletrac Navman portal, which
+# is where the eOrder comes from in the first place.
+STATUS_ORDER_PLACED = "Order placed"
+
 STATUS_READ = "✅ Read"
 STATUS_CHECK = "⚠️ Check"
 STATUS_FAILED = "❌ Failed"
@@ -392,22 +399,26 @@ def to_column_values(parsed, columns=None, installer_item_ids=None):
     put("platform", v_status(_get(parsed, "platform")))
     put("migration_required", v_status(_get(parsed, "migration_required")))
     put("order_date", v_date(_get(parsed, "order_date")))
-    # A zero commission is written as blank, not as 0.
+    # Every money column is blank when the figure is zero or absent, never 0
+    # (Damon, 22 Aug — confirmed across all four).
     #
-    # Same reasoning as ACV below: the eOrder leaves the cell empty when the
-    # figure isn't known yet, and the parser reports that as 0. Writing 0 turns
-    # "nobody has told us" into "the commission is nil" — a real measurement
-    # that reads as a settled fact on the board and drags any total or average
-    # taken over the column. Blank is the honest rendering of unknown.
+    # The eOrder leaves the cell empty when the figure isn't known, and the
+    # parser reports that as 0. Writing 0 turns "nobody has told us" into a
+    # settled nil — a real measurement that drags any average taken over the
+    # column. For Install Commission the blank is load-bearing: Teletrac
+    # Navman sometimes organise the install themselves, and nothing being
+    # payable to Navtek is exactly what an empty cell should say.
+    install = _nonzero(_get(parsed, "install_value"))
     put("dealer_commission", v_number(_nonzero(_get(parsed, "dealer_commission"))))
-    put("install_value", v_number(_get(parsed, "install_value")))
+    put("install_value", v_number(install))
+    put("install_commission", v_number(install))
 
-    # ACV is only written for new-revenue order reasons. The parser returns None
-    # otherwise, and None must stay empty rather than becoming a zero — a zero
-    # is a real measurement that drags a new-business target average down (§4.1).
-    acv = _get(parsed, "acv")
-    if acv is not None:
-        put("acv", v_number(acv))
+    # ACV is only written for new-revenue order reasons — New Business, Add to
+    # Fleet (spelled "Add-On" on the eOrder) and Upsell. Everything else —
+    # renewals, changes of ownership, hardware-only — stays empty, never zero.
+    # The parser owns that rule (eorder_parser.ACV_ORDER_REASONS) and returns
+    # None otherwise; a zero drags the new-business target average down (§4.1).
+    put("acv", v_number(_nonzero(_get(parsed, "acv"))))
 
     # Order Type stays untouched: Rental vs Outright is a commercial term of
     # the deal, not something the eOrder states, so the field is filled in by

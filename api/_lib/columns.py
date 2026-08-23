@@ -49,6 +49,12 @@ ORDER_COLUMNS = [
     # silently evaporating.
     ("acv", "ACV", "numbers", None),
     ("install_value", "Install Value", "numbers", None),
+    # What Navtek is paid to organise and manage the install — the eOrder's
+    # own install figure, which is why it is the same number as Install Value
+    # and separate from Dealer Commission. Blank (never 0) when the eOrder
+    # states nothing or zero: Teletrac Navman sometimes organise the install
+    # themselves, and then nothing is payable.
+    ("install_commission", "Install Commission", "numbers", None),
     ("units_total", "Units Total", "numbers", None),
     ("units_installed", "Units Installed", "numbers", None),
     ("progress_updated", "Progress Updated", "date", None),
@@ -68,6 +74,12 @@ INSTALLER_LINK_COLUMN = ("installer", "Installer", "board_relation")
 # type binds, anything else leaves the column unmapped, which is the same
 # outcome as not trying. This map is lookup-only: nothing here is ever created,
 # so a wrong guess cannot add a duplicate column to a live board.
+# Deliberately absent from every map below: "Install Arranged By" (Navtek
+# organised / Teletrac Navman organised / Customer self-install). Damon owns it
+# by hand — it exists to explain a blank Install Commission — and the eOrder
+# cannot state it reliably: ship-to says where hardware goes, not who arranges
+# the install. Nothing here may bind it, because an unmapped key is the only
+# thing that guarantees the writer never touches the column.
 LEGACY_COLUMNS = [
     ("opportunity_id", ["OPPORTUNITY ID #", "Opportunity ID #", "Opportunity ID",
                         "Opportunity Field ID"], "text"),
@@ -85,6 +97,8 @@ LEGACY_COLUMNS = [
                            "Commission"], "numbers"),
     ("install_value", ["Install Value", "Installation Value",
                        "Install $"], "numbers"),
+    ("install_commission", ["Install Commission", "Installation Commission"],
+     "numbers"),
     ("acv", ["ACV", "Annual Contract Value"], "numbers"),
 ]
 

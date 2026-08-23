@@ -466,6 +466,28 @@ def _run(monday, store, payload, result, started):
     if warnings and status == mapping.STATUS_READ:
         status = mapping.STATUS_CHECK
 
+    # The opening Order Status, on the FIRST read of an order only.
+    #
+    # A new row inherits the board's default label — "6.1 Installer Esc." on
+    # the live board, because it is first in the column's label list — so every
+    # brand new order read as a stalled job. The first successful read stamps
+    # "Order placed", which is what has actually happened.
+    #
+    # Only the first read, and only when the ledger can prove it is the first:
+    # this column is the team's own working status, and re-stamping it on a
+    # later drop would drag a job that has moved on back to the start. With the
+    # database unavailable we cannot tell first from fifth, so we leave it be —
+    # a missed opening status is recoverable, a status dragged backwards is a
+    # job someone stops chasing.
+    if (previous is None and store.enabled and not store.degraded
+            and cols.get("order_status") and status != mapping.STATUS_FAILED):
+        opening, opening_dropped = mapping.align_status_values(
+            {cols["order_status"]: mapping.v_status(mapping.STATUS_ORDER_PLACED)},
+            board_labels,
+        )
+        values.update(opening)
+        warnings.extend(_dropped_warnings(opening_dropped, cols))
+
     if cols.get("eorder_status"):
         status_value, status_dropped = mapping.align_status_values(
             {cols["eorder_status"]: mapping.v_status(status)}, board_labels
