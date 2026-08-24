@@ -312,6 +312,19 @@ class Monday:
         )
         return data.get("webhooks") or []
 
+    def delete_webhook(self, webhook_id):
+        """Remove one webhook, so it can be recreated at a corrected URL.
+
+        monday has no "change this webhook's URL" mutation, and the URL is not
+        readable back from the webhooks query either — so a registration whose
+        ?hook= token has gone stale can only be repaired by replacing it.
+        """
+        data = self.gql(
+            "mutation ($i: ID!) { delete_webhook (id: $i) { id } }",
+            {"i": str(webhook_id)},
+        )
+        return data.get("delete_webhook") or {}
+
     def create_webhook(self, board_id, url, event, config_json=None):
         variables = {"b": str(board_id), "u": url, "e": event}
         config_arg = ""

@@ -191,6 +191,23 @@ def normalise_label(text):
     return " ".join(cleaned.split())
 
 
+# A workflow number at the front of a label: "6.1 Installer Esc.", "1.0 Order
+# Placed", "2 Booked". Navtek's board numbers every stage, so the label the
+# code asks for ("Order placed") never matches the label the board actually
+# has ("1.0 Order Placed") on text alone.
+_STAGE_NUMBER = re.compile(r"^\d+(?:[.\-]\d+)*\s+")
+
+
+def strip_stage_number(text):
+    """"1.0 Order Placed" → "order placed". Unnumbered labels are unchanged.
+
+    Deliberately narrow: only a leading run of digits and separators followed
+    by whitespace. It must not turn two genuinely different stages into the
+    same key, so nothing else about the label is discarded.
+    """
+    return normalise_label(_STAGE_NUMBER.sub("", str(text).strip()))
+
+
 def align_status_values(values, labels_by_column):
     """Fit proposed {"label": …} writes to the labels the board really has.
 
@@ -217,14 +234,23 @@ def align_status_values(values, labels_by_column):
         # "✅ Read" on one column), the FIRST wins — index order is the column's
         # own label order, and last-wins made the rewrite depend on dict
         # iteration order.
-        by_normalised = {}
+        by_normalised, by_stage = {}, {}
         for label in available:
             by_normalised.setdefault(normalise_label(label), label)
+            by_stage.setdefault(strip_stage_number(label), label)
         wanted = normalise_label(proposed)
         # A label that normalises to nothing (pure emoji/punctuation) has no
         # text to match on — treat it as unmatched rather than pairing two
         # unrelated symbols.
         match = by_normalised.get(wanted) if wanted else None
+        if not match and wanted:
+            # Second tier: ignore a leading workflow number on the BOARD's
+            # label, so "Order placed" finds "1.0 Order Placed". Navtek number
+            # every stage, and without this the app can only ever write to a
+            # board whose labels happen to be unnumbered. Still an exact match
+            # on everything after the number — this widens what counts as the
+            # same name, not what counts as a match.
+            match = by_stage.get(strip_stage_number(proposed))
         if match:
             aligned[column_id] = {"label": match}
         else:

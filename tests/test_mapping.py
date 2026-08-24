@@ -666,3 +666,40 @@ def test_a_real_dealer_commission_is_still_written():
     values = mapping.to_column_values(
         {"opportunity_id": "X", "company": "Y", "dealer_commission": 3366.9}, cols)
     assert values["numeric_comm"] == "3366.9"
+
+
+# -- numbered workflow labels (Navtek's board, 24 Aug) ----------------------
+
+def test_a_label_matches_through_its_workflow_number():
+    """Navtek number every stage — "1.0 Order Placed", "6.1 Installer Esc." —
+    so a label asked for by name alone never matched and was dropped."""
+    labels = {"c": ["6.1 Installer Esc.", "1.0 Order Placed", "2.0 Booked"]}
+    aligned, dropped = mapping.align_status_values(
+        {"c": {"label": "Order placed"}}, labels)
+    assert aligned["c"] == {"label": "1.0 Order Placed"}
+    assert dropped == []
+
+
+def test_an_exact_match_still_wins_over_the_numbered_one():
+    """Widening the second tier must not change what the first tier does."""
+    labels = {"c": ["Order placed", "1.0 Order Placed"]}
+    aligned, _ = mapping.align_status_values(
+        {"c": {"label": "Order placed"}}, labels)
+    assert aligned["c"] == {"label": "Order placed"}
+
+
+def test_a_genuinely_absent_label_is_still_dropped():
+    """This widens what counts as the same name, not what counts as a match —
+    a wrong status write is worse than a reported miss."""
+    labels = {"c": ["6.1 Installer Esc.", "1.0 Order Placed"]}
+    aligned, dropped = mapping.align_status_values(
+        {"c": {"label": "Cancelled"}}, labels)
+    assert aligned == {}
+    assert dropped and dropped[0][1] == "Cancelled"
+
+
+def test_two_differently_numbered_stages_never_collapse_together():
+    labels = {"c": ["1.0 Booked", "2.0 Booked In"]}
+    aligned, _ = mapping.align_status_values({"c": {"label": "Booked"}}, labels)
+    assert aligned["c"] == {"label": "1.0 Booked"}
+    assert mapping.strip_stage_number("2.0 Booked In") == "booked in"

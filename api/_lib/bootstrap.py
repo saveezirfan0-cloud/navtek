@@ -338,7 +338,7 @@ def eorder_column_id(monday, board_id=None):
     return resolved(monday, board_id, force=True).get("eorder_file")
 
 
-def register_webhook(monday, url, board_id=None, file_column_id=None):
+def register_webhook(monday, url, board_id=None, file_column_id=None, force=False):
     board_id = board_id or config.ORDERS_BOARD_ID
     # With WEBHOOK_SECRET set, the registration carries it and /eorder rejects
     # deliveries without it. Registered here so setup step 4 is the only thing
@@ -350,24 +350,40 @@ def register_webhook(monday, url, board_id=None, file_column_id=None):
         raise ValueError(
             "No file column called 'eOrder' on the board. Run step 2 first."
         )
-    return _register_column_webhook(monday, board_id, column_id, url)
+    return _register_column_webhook(monday, board_id, column_id, url, force)
 
 
-def _register_column_webhook(monday, board_id, column_id, url):
+def _register_column_webhook(monday, board_id, column_id, url, force=False):
     """change_specific_column_value on one column, exactly once.
 
     Registering twice would process every change twice — for the eOrder column
     that means every dropped file ingested twice, for the Installer column
     every reallocation handled twice.
+
+    force=True replaces an existing registration instead of leaving it. That
+    is the only way to repair a stale ?hook= token: monday cannot change a
+    webhook's URL, and does not return the URL from the webhooks query either,
+    so "is this registration still correct?" is a question that cannot be
+    asked — only answered by replacing it. Without this, re-running setup
+    step 4 after rotating WEBHOOK_SECRET reported "already registered" and
+    changed nothing, while every delivery was turned away at the door.
     """
     for hook in monday.webhooks(board_id):
         if hook.get("config") and column_id in str(hook["config"]):
-            return {
-                "webhook_id": hook["id"],
-                "url": url,
-                "column_id": column_id,
-                "already_registered": True,
-            }
+            if not force:
+                return {
+                    "webhook_id": hook["id"],
+                    "url": url,
+                    "column_id": column_id,
+                    "already_registered": True,
+                }
+            monday.delete_webhook(hook["id"])
+            hook = monday.create_webhook(
+                board_id, url, "change_specific_column_value",
+                {"columnId": column_id},
+            )
+            return {"webhook_id": hook["id"], "url": url,
+                    "column_id": column_id, "replaced": True}
 
     hook = monday.create_webhook(
         board_id, url, "change_specific_column_value", {"columnId": column_id}
@@ -375,7 +391,7 @@ def _register_column_webhook(monday, board_id, column_id, url):
     return {"webhook_id": hook["id"], "url": url, "column_id": column_id}
 
 
-def register_flow_webhooks(monday, base_url, board_id=None):
+def register_flow_webhooks(monday, base_url, board_id=None, force=False):
     """Every webhook the installer flow needs, idempotently, in one call.
 
     Alongside the eOrder file webhook: the Installer column (reallocation —
@@ -403,14 +419,15 @@ def register_flow_webhooks(monday, base_url, board_id=None):
         if not column_id:
             skipped.append(key)
             continue
-        result = _register_column_webhook(monday, board_id, column_id, url)
+        result = _register_column_webhook(monday, board_id, column_id, url, force)
         registered.append({"column": key, **result})
     result = {"registered": registered, "skipped_missing_columns": skipped}
 
     # The Installer Accounts board's own webhooks ride along too — but a
     # portal board that doesn't exist yet must not fail the order webhooks.
     try:
-        result["installer_board"] = register_installer_webhooks(monday, base)
+        result["installer_board"] = register_installer_webhooks(monday, base,
+                                                                force=force)
     except Exception as exc:  # noqa: BLE001
         result["installer_board"] = {"error": f"{type(exc).__name__}: {exc}"}
     return result
@@ -419,7 +436,8 @@ def register_flow_webhooks(monday, base_url, board_id=None):
 INSTALLER_BOARD_EVENTS = ("create_item", "change_column_value")
 
 
-def register_installer_webhooks(monday, base_url, installers_board_id=None):
+def register_installer_webhooks(monday, base_url, installers_board_id=None,
+                                force=False):
     """Auto-onboarding webhooks, on the Installer Accounts board itself.
 
     create_item fires the moment a row lands, so a new account issues its own
@@ -436,11 +454,19 @@ def register_installer_webhooks(monday, base_url, installers_board_id=None):
                 "skipped": "no Installer Accounts board yet — run step A first"}
     suffix = f"?hook={config.WEBHOOK_SECRET}" if config.WEBHOOK_SECRET else ""
     url = f"{base_url.rstrip('/')}/api/py/installer-account-change{suffix}"
-    existing = {h.get("event") for h in monday.webhooks(board_id)}
+    existing = {h.get("event"): h for h in monday.webhooks(board_id)}
     registered = []
     for event in INSTALLER_BOARD_EVENTS:
         if event in existing:
-            registered.append({"event": event, "already_registered": True})
+            if not force:
+                registered.append({"event": event, "already_registered": True})
+                continue
+            # Same repair as the column webhooks: the URL cannot be read back
+            # or changed, so a stale ?hook= token is fixed by replacement.
+            monday.delete_webhook(existing[event]["id"])
+            hook = monday.create_webhook(board_id, url, event)
+            registered.append({"event": event, "webhook_id": hook["id"],
+                               "replaced": True})
             continue
         hook = monday.create_webhook(board_id, url, event)
         registered.append({"event": event, "webhook_id": hook["id"]})

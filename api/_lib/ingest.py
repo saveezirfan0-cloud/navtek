@@ -15,7 +15,7 @@ import time
 import traceback
 from datetime import datetime
 
-from . import columns as columns_mod
+from . import clock, columns as columns_mod
 from . import config, installers, mapping
 from .monday import Monday, MondayError
 from .store import Store, sha256
@@ -49,7 +49,7 @@ def current_group_id(monday, board_id, when=None, strict=False):
     auto-created group on a live board is harder to notice than a row in the
     wrong place.
     """
-    when = when or datetime.now()
+    when = when or clock.now()
     month, year = MONTHS[when.month - 1], when.year
     groups = monday.board_groups(board_id)
 
@@ -107,7 +107,7 @@ def _file_into_month_group(monday, board_id, item_id, existing, when=None):
         group = (existing or {}).get("group") or {}
         if _in_a_month_group(group.get("title")):
             return None
-        when = when or datetime.now()
+        when = when or clock.now()
         group_id = current_group_id(monday, board_id, when=when, strict=True)
         if not group_id:
             group_id = monday.create_group(

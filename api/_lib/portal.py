@@ -19,7 +19,7 @@ everything downstream of install_items() sees the same shape.
 import re
 from datetime import date, datetime, timedelta, timezone
 
-from . import columns as columns_mod
+from . import clock, columns as columns_mod
 from . import config, holidays_au, mapping
 
 # Kept as a module name for older imports; the value now follows config.
@@ -49,7 +49,7 @@ def business_days_since(when, state="NSW", today=None):
     if not when:
         return None
     days, cursor = 0, when
-    today = today or date.today()
+    today = today or clock.today()
     while cursor < today:
         cursor += timedelta(days=1)
         if holidays_au.is_business_day(cursor, state):
@@ -428,7 +428,7 @@ def apply_action(monday, store, account, item_id, action, value=None, note=None)
     require_ownership(monday, store, account, item_id)
 
     cols = columns_mod.resolved(monday)
-    today = date.today().isoformat()
+    today = clock.today().isoformat()
     values = {}
 
     def put(key, encoded):

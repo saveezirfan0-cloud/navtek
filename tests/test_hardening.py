@@ -255,3 +255,50 @@ def test_purge_is_off_when_retention_is_zero():
     store = Store(url="", key="")   # disabled either way — must not matter
     assert store.purge_logs(0) == {"purged": False}
     assert store.purge_logs(None) == {"purged": False}
+
+
+# -- a rejected delivery must not be invisible (Qualityvend, 23 Aug) --------
+
+def test_health_reports_deliveries_that_were_turned_away(monkeypatch):
+    """The one outcome that leaves NOTHING on the monday row: the rejection is
+    decided before there is an item to stamp. A stale ?hook= token looked
+    exactly like an automation nobody triggered until this surfaced it."""
+    class RejectingStore:
+        enabled = True
+        degraded = None
+
+        def ping(self):
+            return {"ok": True, "state": "ready"}
+
+        def recent_rejections(self, hours=48, limit=20):
+            return [{"reason": "?hook= token does not match WEBHOOK_SECRET",
+                     "created_at": "2026-08-23T13:58:00Z",
+                     "monday_item_id": 12876526186}]
+
+    monkeypatch.setattr(_module, "Store", lambda: RejectingStore())
+    monkeypatch.setattr(_module.columns_mod, "resolved", lambda *a, **k: {})
+    data = client().get("/api/py/health").json()
+
+    assert len(data["rejected_deliveries"]) == 1
+    warning = " ".join(data["config_warnings"])
+    assert "turned away" in warning
+    assert "WEBHOOK_SECRET" in warning
+    assert "Re-register" in warning
+
+
+def test_health_says_nothing_about_rejections_when_there_are_none(monkeypatch):
+    class QuietStore:
+        enabled = True
+        degraded = None
+
+        def ping(self):
+            return {"ok": True, "state": "ready"}
+
+        def recent_rejections(self, hours=48, limit=20):
+            return []
+
+    monkeypatch.setattr(_module, "Store", lambda: QuietStore())
+    monkeypatch.setattr(_module.columns_mod, "resolved", lambda *a, **k: {})
+    data = client().get("/api/py/health").json()
+    assert data["rejected_deliveries"] == []
+    assert not any("turned away" in w for w in data["config_warnings"])

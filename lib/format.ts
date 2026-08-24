@@ -15,11 +15,25 @@ export function mondayItemUrl(
   return `https://${slug}.monday.com/boards/${boardId}/pulses/${itemId}`;
 }
 
+/** The timezone the business runs on. Every timestamp this app stores is UTC;
+ * rendering without a zone gives each viewer their OWN browser's time, so the
+ * same delivery read 11:58 pm in London and 8:58 am in Sydney and neither
+ * matched what monday showed. Navtek work Australian eastern time, so that is
+ * what the dashboard says — for everyone, wherever they are reading it. */
+export const TZ = "Australia/Sydney";
+
+/** The year it currently is in Sydney — not in the viewer's timezone, or the
+ * year label appears and disappears depending on who is looking. */
+function sydneyYear(d: Date): string {
+  return d.toLocaleDateString("en-AU", { year: "numeric", timeZone: TZ });
+}
+
 export function when(iso: string) {
   const d = new Date(iso);
-  const thisYear = d.getFullYear() === new Date().getFullYear();
+  const thisYear = sydneyYear(d) === sydneyYear(new Date());
   return d.toLocaleString("en-AU", {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+    timeZone: TZ,
     ...(thisYear ? {} : { year: "numeric" }),
   });
 }

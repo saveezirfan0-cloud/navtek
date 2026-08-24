@@ -18,7 +18,7 @@ sla.py for why both exist.
 
 from datetime import date
 
-from . import columns as columns_mod
+from . import clock, columns as columns_mod
 from . import config, portal, sms
 
 
@@ -38,7 +38,7 @@ def evaluate(monday, store, item_id, today=None):
     arrives with both already set. Safe to call any number of times — the
     notifications claim makes retries free.
     """
-    today = today or date.today()
+    today = today or clock.today()
     item = monday.item(item_id)
     if not item:
         return {"ok": True, "sent": False, "reason": "item no longer exists"}
@@ -54,7 +54,7 @@ def evaluate(monday, store, item_id, today=None):
 
 def notify_allocation(store, account, job, today=None):
     """Send the allocation SMS if the both-parts rule holds. Idempotent."""
-    today = today or date.today()
+    today = today or clock.today()
     item_id = int(job["item_id"])
 
     dispatched = _dispatched_date(job, today)
@@ -195,7 +195,7 @@ def handle_installer_change(monday, store, payload, today=None):
 
     An item that was never dispatched notifies nobody.
     """
-    today = today or date.today()
+    today = today or clock.today()
     event = payload.get("event") or {}
     item_id = event.get("pulseId")
     if not item_id:

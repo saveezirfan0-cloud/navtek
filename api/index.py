@@ -85,6 +85,8 @@ def health(fresh: bool = Query(default=False)):
     most-visited page. ?fresh=1 bypasses the cache when it matters; the setup
     page's own refresh step always does.
     """
+    _store = Store()
+    _rejections = _store.recent_rejections()
     try:
         cols = columns_mod.resolved(Monday(), force=fresh)
         source = "board" if not config.COLUMNS.get("eorder_file") else "COLUMN_IDS"
@@ -113,6 +115,13 @@ def health(fresh: bool = Query(default=False)):
              "WEBHOOK_SECRET to a long random string and re-run setup step 4 "
              "so the registered URL carries it."]
         ) + (
+            [f"{len(_rejections)} webhook delivery(ies) were turned away in the "
+             f"last 48 hours: {_rejections[0].get('reason')}. Nothing lands on "
+             f"the monday row for a rejected delivery. If WEBHOOK_SECRET was "
+             f"changed, the registered URL still carries the old ?hook= token "
+             f"— re-run setup step 4 with Re-register."]
+            if _rejections else []
+        ) + (
             ["MONDAY_SIGNING_SECRET is set, but monday only signs webhooks "
              "created through an app's OAuth token. If these were registered "
              "with a personal API token they arrive unsigned and this secret "
@@ -120,7 +129,12 @@ def health(fresh: bool = Query(default=False)):
             if config.MONDAY_SIGNING_SECRET and not config.MONDAY_SIGNING_REQUIRED
             else []
         ),
-        "database": Store().ping(),
+        "database": _store.ping(),
+        # Deliveries monday made that this app turned away. Nothing lands on
+        # the row for these — the rejection happens before there is an item to
+        # stamp — so without surfacing them here a stale ?hook= token looks
+        # exactly like an automation nobody triggered.
+        "rejected_deliveries": _rejections,
         "unmapped_columns": columns_mod.unmapped(cols),
         "unmapped_optional": columns_mod.unmapped_optional(cols),
         "column_ids": cols,
@@ -1221,18 +1235,27 @@ def setup_webhook(body: dict = Body(default={}), x_setup_key: str = Header(defau
     url = (body or {}).get("url", "").strip().rstrip("/")
     if not url.startswith("https://"):
         raise HTTPException(400, "Enter this app's address, starting https://")
+    # force=true replaces existing registrations rather than reporting them as
+    # already done. This is the repair for a rotated WEBHOOK_SECRET: the ?hook=
+    # token is baked into the registered URL, monday cannot change a webhook's
+    # URL or even report it back, and until this existed a re-run of this step
+    # said "already registered" while every delivery was being turned away.
+    force = bool((body or {}).get("force"))
     monday = Monday()
     try:
-        result = bootstrap.register_webhook(monday, f"{url}/api/py/eorder")
+        result = bootstrap.register_webhook(monday, f"{url}/api/py/eorder",
+                                            force=force)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     # The installer-flow webhooks (Installer column, dispatch date, status)
     # ride the same step, idempotently. Missing columns are skipped, not fatal
     # — the eOrder webhook is the one this step must not leave unregistered.
     try:
-        result["flow_webhooks"] = bootstrap.register_flow_webhooks(monday, url)
+        result["flow_webhooks"] = bootstrap.register_flow_webhooks(
+            monday, url, force=force)
     except Exception as exc:  # noqa: BLE001
         result["flow_webhooks"] = {"error": f"{type(exc).__name__}: {exc}"}
+    result["forced"] = force
     return result
 
 

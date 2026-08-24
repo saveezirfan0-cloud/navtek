@@ -38,6 +38,10 @@ function niceMax(value: number): number {
 }
 
 function dayLabel(iso: string): string {
+  // The bucket keys are plain YYYY-MM-DD days, already counted in Sydney time
+  // by the server. Pinning the render to UTC keeps the label the same date as
+  // the key it came from — reading it in Sydney time would shift every bar's
+  // label forward by a day.
   const d = new Date(`${iso}T00:00:00Z`);
   return d.toLocaleDateString("en-AU", {
     day: "numeric",

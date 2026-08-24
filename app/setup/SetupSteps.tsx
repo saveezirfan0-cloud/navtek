@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { runStep, type Result } from "./actions";
 
@@ -177,6 +178,22 @@ export default function SetupSteps() {
           onClick={() => go("webhook", { url })}
         >
           Register webhook
+        </button>
+        <p>
+          <b>Re-register</b> after changing <code>WEBHOOK_SECRET</code>. The
+          secret is baked into the registered URL as <code>?hook=</code>, and
+          monday can neither change a webhook&rsquo;s address nor report it
+          back — so a rotated secret leaves every delivery being turned away
+          while the ordinary button above still says &ldquo;already
+          registered&rdquo;. Rejected deliveries show on{" "}
+          <Link href="/deliveries">Deliveries</Link>.
+        </p>
+        <button
+          className="act ghost"
+          disabled={!url.startsWith("https://") || results.webhook === "running"}
+          onClick={() => go("webhook", { url, force: true })}
+        >
+          Re-register (replace existing)
         </button>
         <Output result={results.webhook ?? null} />
       </div>

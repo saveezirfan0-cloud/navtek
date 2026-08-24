@@ -527,6 +527,32 @@ class Store:
     # never sees — duplicate skips, removed files, deliveries with no file.
     # monday's automation log shows all of these as Success.
 
+    def recent_rejections(self, hours=48, limit=20):
+        """Deliveries turned away at the door in the last `hours`.
+
+        A rejection is the one outcome that leaves NOTHING on the monday row —
+        it is decided before the payload is trusted enough to act on, so there
+        is no item to stamp. That makes it the exact state this app exists to
+        stop being invisible: monday reports the automation ran, the row shows
+        nothing, and only this log knows why. Surfaced on /health so a stale
+        ?hook= token announces itself instead of quietly dropping every order.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        if not self.enabled:
+            return []
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours))
+        try:
+            return self._get("webhook_log", {
+                "select": "reason,created_at,monday_item_id",
+                "outcome": "eq.rejected",
+                "created_at": f"gte.{cutoff.isoformat()}",
+                "order": "created_at.desc",
+                "limit": str(limit),
+            }) or []
+        except Exception:  # noqa: BLE001 - a diagnostic must never break /health
+            return []
+
     def record_webhook(self, **fields):
         try:
             return self._post("webhook_log", [fields], prefer="return=minimal")

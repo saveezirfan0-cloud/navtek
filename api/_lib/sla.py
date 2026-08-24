@@ -23,7 +23,7 @@ The daily sweep is called by a Vercel cron via POST /api/py/sla/sweep.
 
 from datetime import date
 
-from . import columns as columns_mod
+from . import clock, columns as columns_mod
 from . import config, mapping, notify, portal
 
 ESCALATION_LABEL = "6.1 Installer Esc."
@@ -45,7 +45,7 @@ def sweep(monday, store, today=None):
             ),
         }
 
-    today = today or date.today()
+    today = today or clock.today()
     shadow = not config.SLA_NOTIFICATIONS_ENABLED
     breaches, checked = [], 0
 
@@ -81,7 +81,7 @@ def preview(monday, store, today=None):
     mode = ("off" if not go_live
             else "live" if config.SLA_NOTIFICATIONS_ENABLED
             else "shadow")
-    today = today or date.today()
+    today = today or clock.today()
     jobs_out, checked = [], 0
 
     if go_live:
