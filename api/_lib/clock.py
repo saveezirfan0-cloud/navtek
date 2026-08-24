@@ -8,11 +8,13 @@ on the 1st filed into the previous month's group. With the SLA engine live
 (SLA_NOTIFICATIONS_ENABLED) an off-by-one day is a real reminder sent to a real
 installer about a job that is not late yet.
 
-ZoneInfo is the source of truth; `tzdata` is pinned in requirements.txt so the
-zone resolves even on a runtime image that ships no system zoneinfo. The manual
-fallback exists because a missing timezone database must not take the app down
-— UTC+10/+11 by the NSW rule is wrong for at most an hour a year at the
-changeover, where UTC is wrong for half of every day.
+ZoneInfo is used where the runtime has a timezone database, and the offsets are
+computed directly where it does not. Deliberately NO new dependency: this
+module was first written with `tzdata` pinned in requirements.txt, the deploy
+that carried it left the Python function down, and a timezone helper is not
+worth a dependency it can do without. The manual rule is exact for AEST/AEDT
+except within a few hours of the changeover twice a year — where plain UTC is
+wrong by a whole date for half of every day.
 """
 
 from datetime import date, datetime, timedelta, timezone

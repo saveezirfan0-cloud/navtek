@@ -23,10 +23,18 @@ REQUIRED = {
 }
 
 # Modules that must be present in api/_lib for the app to import at all.
+#
+# EVERY module, not the subset this used to list. A file missing from the
+# deployment is the exact failure this endpoint exists to name, and eight of
+# them — clock, emailer, holidays_au, notify, onboarding, sla, sms, users —
+# were absent from the list, so their absence would have been reported as
+# "everything present" while the app returned bare 500s. tests/test_diag.py
+# keeps this in step with the directory so the gap cannot reopen.
 EXPECTED_LIB = [
-    "__init__.py", "bootstrap.py", "columns.py", "config.py",
-    "eorder_parser.py", "ingest.py", "installers.py", "mapping.py",
-    "monday.py", "portal.py", "store.py",
+    "__init__.py", "bootstrap.py", "clock.py", "columns.py", "config.py",
+    "emailer.py", "eorder_parser.py", "holidays_au.py", "ingest.py",
+    "installers.py", "mapping.py", "monday.py", "notify.py", "onboarding.py",
+    "portal.py", "sla.py", "sms.py", "store.py", "users.py",
 ]
 
 
@@ -84,9 +92,11 @@ def _import_app():
     if here not in sys.path:
         sys.path.insert(0, here)
     steps = {}
-    for module in ("_lib.config", "_lib.columns", "_lib.monday", "_lib.mapping",
-                   "_lib.eorder_parser", "_lib.store", "_lib.bootstrap",
-                   "_lib.installers", "_lib.portal", "_lib.ingest"):
+    for module in ("_lib.config", "_lib.clock", "_lib.columns", "_lib.monday",
+                   "_lib.mapping", "_lib.eorder_parser", "_lib.store",
+                   "_lib.bootstrap", "_lib.installers", "_lib.holidays_au",
+                   "_lib.portal", "_lib.notify", "_lib.sla", "_lib.emailer",
+                   "_lib.onboarding", "_lib.users", "_lib.sms", "_lib.ingest"):
         try:
             __import__(module)
             steps[module] = "ok"
