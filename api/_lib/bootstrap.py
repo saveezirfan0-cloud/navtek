@@ -8,7 +8,9 @@ title does not already exist, so every function is safe to run twice.
 import secrets
 
 from . import config, installers
-from .columns import INSTALLER_LINK_COLUMN, ORDER_COLUMNS, resolved
+from .columns import (
+    INSTALLER_LINK_COLUMN, LEGACY_COLUMNS, ORDER_COLUMNS, _compatible, resolved,
+)
 
 INSTALLER_COLUMNS = [
     ("account_type", "Type", "status",
@@ -38,17 +40,59 @@ SEED_ACCOUNTS = [
 ]
 
 
+# Historical titles per key, so a column already on the board under an older
+# name is REUSED rather than duplicated. Same source columns.resolved() reads.
+_ALIASES = {key: titles for key, titles, _ in LEGACY_COLUMNS}
+
+
+def _match_existing(existing_by_title, key, title, ctype):
+    """The column this key should bind to, and why — or (None, note) to create.
+
+    Matches the way columns.resolved() does: the app's own title first, then
+    any historical title for the same key, and always on a compatible TYPE.
+
+    Doing less than this is what produced the duplicate ACV and Install
+    Commission columns on the live board. The board already carried them under
+    another title, create_columns looked only for its own spelling, found
+    nothing, and made a second one alongside — so the app wrote to its new
+    empty column while the team kept reading the old populated one.
+    """
+    found = existing_by_title.get(title.lower())
+    if found and _compatible(found["type"], ctype):
+        return found, None
+    if found:
+        # Same name, wrong type. Creating a second column with an identical
+        # title would be worse than saying so: two "ACV" columns are
+        # indistinguishable in every view and dropdown on the board.
+        return None, (f"conflict {title} — a column of this name already "
+                      f"exists but is a '{found['type']}', not a '{ctype}'. "
+                      f"Change its type or rename it, then re-run this step.")
+    for alias in _ALIASES.get(key, []):
+        if alias.lower() == title.lower():
+            continue
+        candidate = existing_by_title.get(alias.lower())
+        if candidate and _compatible(candidate["type"], ctype):
+            return candidate, f"reused   {alias} for {title} ({candidate['id']})"
+    return None, None
+
+
 def plan_columns(monday, board_id=None):
     """What create_columns() would do. Read this before running it."""
     board_id = board_id or config.ORDERS_BOARD_ID
     existing = {c["title"].strip().lower(): c for c in monday.board_columns(board_id)}
     plan = []
     for key, title, ctype, _ in ORDER_COLUMNS:
-        found = existing.get(title.lower())
+        found, note = _match_existing(existing, key, title, ctype)
+        if found:
+            action = "exists" if found["title"].strip().lower() == title.lower() \
+                else f"reuse '{found['title']}'"
+        else:
+            action = "conflict" if note else "create"
         plan.append({
             "key": key, "title": title, "type": ctype,
-            "action": "exists" if found else "create",
+            "action": action,
             "column_id": found["id"] if found else None,
+            **({"note": note} if note else {}),
         })
     return plan
 
@@ -70,10 +114,15 @@ def create_columns(monday, board_id=None):
     log, failed = [], []
 
     for key, title, ctype, defaults in ORDER_COLUMNS:
-        found = existing.get(title.lower())
+        found, note = _match_existing(existing, key, title, ctype)
         if found:
             resolved[key] = found["id"]
-            log.append(f"exists   {title} ({found['id']})")
+            log.append(note or f"exists   {title} ({found['id']})")
+            continue
+        if note:
+            # A same-named column of the wrong type. Never create alongside it.
+            failed.append(title)
+            log.append(note)
             continue
         try:
             created = monday.create_column(board_id, title, ctype, defaults)

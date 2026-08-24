@@ -544,6 +544,83 @@ long it took.
 
 ---
 
+# Moving from the sandbox to the live board
+
+Same app, same deployment — the board is configuration, not code. Nothing is
+copied across: the live board keeps its own rows, and the app is pointed at it.
+
+Do these in order. Steps 1–3 are the ones that go wrong if reversed.
+
+**1. Point the app at the live board.** In Vercel → Settings → Environment
+Variables, set `ORDERS_BOARD_ID` to the live board's ID (the number in its URL)
+and `INSTALLERS_BOARD_ID` to the live Installer Accounts board, if you use the
+portal.
+
+**2. Clear `COLUMN_IDS` — do not skip this.** Column IDs belong to *a board*.
+Every ID pinned there is a sandbox ID that does not exist on the live board.
+The app drops IDs it cannot find and looks the column up by title instead, and
+says so on `/health`, so a stale value is survivable — but clearing it is the
+fix, and leaving it means every one of those warnings stays on the dashboard
+for good.
+
+**3. Redeploy.** Environment variables are read at boot; the change does not
+take effect until the next deployment.
+
+**4. Check the plan before creating anything.** Setup step 2 has a *plan* that
+lists, per column, whether it will reuse an existing one or create a new one.
+Read it first on a live board. A column already there under an older title
+(`Annual Contract Value` for `ACV`, `Total Commission` for `Dealer Commission`)
+is reused, and a column of the right name but the wrong type is reported as a
+conflict rather than duplicated. Then run step 2 itself.
+
+**5. Register the webhook** — setup step 4, with this app's own address. If the
+board already has a registration from an earlier attempt, or `WEBHOOK_SECRET`
+has changed since, use **Re-register (replace existing)** instead: monday
+cannot change a webhook's URL, so a stale one has to be replaced, and the
+ordinary button will only tell you it is already registered.
+
+**6. Turn `ALLOW_DUPLICATE_FILES` off.** It exists for testing, where
+re-dropping the same file has to re-run and correct values. On a live board it
+means a duplicated drop is processed again instead of being recognised and
+skipped.
+
+**7. Decide the SLA posture before the first sweep.** This is the one that can
+embarrass you. `SLA_GO_LIVE_DATE` is the cutoff: only jobs dispatched on or
+after it enter the engine. On the sandbox that date is harmless, because there
+are five rows. On the live board every job dispatched since that date is in
+scope on the first sweep, and with `SLA_NOTIFICATIONS_ENABLED=true` the first
+sweep *sends*. Set the date to the day you actually go live, and leave
+notifications off for the first week — the sweep still runs and records
+everything it would have done, which is what you read before switching it on.
+
+**8. Confirm.** Open `/health`. `unmapped_columns` should be empty, and
+`webhook_hardening.hook_token` should be `true`. Then drop one real eOrder and
+watch the row.
+
+## Then what — how an order actually flows
+
+1. Someone creates the row on the orders board, however they do today.
+2. They drop the eOrder `.xlsx` onto that row's **eOrder** column. That column
+   specifically — the webhook is registered against it alone, so a file on any
+   other files column does nothing, which is deliberate.
+3. Within a few seconds the row is renamed, its fields fill in, it moves to the
+   group for the month the order was placed, and an Update appears saying what
+   was read.
+4. **eOrder Status** on the row is the verdict: ✅ Read, ⚠️ Check (read, but
+   something needs a human eye — the Update lists what), ❌ Failed (nothing was
+   written, and the Update says why).
+5. A multi-site order also grows one subitem per delivery site, each with its
+   own contact, address and unit count.
+
+Nothing else needs pressing. The **OPPORTUNITY ID** does not have to be filled
+in first — it is read out of the file, and if that opportunity already has a
+row elsewhere on the board the eOrder is read into *that* row instead, and the
+row it was dropped on is stamped Duplicate and told where the order went.
+
+If nothing happens at all, the answer is on **Deliveries** in the dashboard: it
+records every call monday made, including the ones that changed nothing and the
+ones this app turned away.
+
 # When something goes wrong
 
 | What you see | What it means |
