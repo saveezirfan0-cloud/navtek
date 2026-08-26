@@ -47,6 +47,15 @@ ORDER_COLUMNS = [
     # exist (LEGACY_COLUMNS binds them by any of their historical titles); on
     # any other board, setup step 2 now creates them instead of the values
     # silently evaporating.
+    # The eOrder's own reason for the order. Deliberately NOT Order Type:
+    # Damon's Order Type list carries the commercial term too ("New Business |
+    # Rental" vs "New Business | Outright") and covers order kinds the eOrder
+    # never states, so his staff choose it by hand. This column is the half the
+    # eOrder can answer, and it leaves that one alone.
+    ("order_reason", "Order Reason", "status",
+     {"labels": {"1": "New Business", "2": "Add-On", "3": "Upsell",
+                 "4": "Change of Ownership", "5": "Service Only Renewal",
+                 "6": "Hardware Only (Replacement unit)"}}),
     ("acv", "ACV", "numbers", None),
     ("install_value", "Install Value", "numbers", None),
     # What Navtek is paid to organise and manage the install — the eOrder's
@@ -87,7 +96,11 @@ LEGACY_COLUMNS = [
     # SLA escalation writes that one existing label and nothing else; a board
     # without this column simply skips escalation and says so.
     ("order_status", ["Status", "Order Status", "Job Status"], "status"),
+    # Lookup-only, and never written: the eOrder cannot state Rental vs
+    # Outright, and Damon's staff pick the value. Bound here only so /health
+    # can report whether the column exists.
     ("order_type", ["Order Type"], "status"),
+    ("order_reason", ["Order Reason", "Order Category"], "status"),
     ("platform", ["Platform"], "status"),
     ("migration_required", ["Migration Required", "Migration Required?",
                             "Migration"], "status"),

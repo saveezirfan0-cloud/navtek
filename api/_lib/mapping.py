@@ -191,11 +191,16 @@ def normalise_label(text):
     return " ".join(cleaned.split())
 
 
-# A workflow number at the front of a label: "6.1 Installer Esc.", "1.0 Order
-# Placed", "2 Booked". Navtek's board numbers every stage, so the label the
-# code asks for ("Order placed") never matches the label the board actually
-# has ("1.0 Order Placed") on text alone.
-_STAGE_NUMBER = re.compile(r"^\d+(?:[.\-]\d+)*\s+")
+# A workflow number at the front of a label: "4. Order Placed", "6.1 Installer
+# Esc.", "2 Booked". Navtek's board numbers every stage, so the label the code
+# asks for ("Order placed") never matches the label the board actually has on
+# text alone.
+#
+# The trailing dot is why this needed a second pass. "6.1 Installer Esc."
+# worked, because ".1" satisfied the decimal group — but "4. Order Placed" left
+# the dot behind and stripped to "4 order placed", so the one label Damon
+# actually asked for was the one that still did not match.
+_STAGE_NUMBER = re.compile(r"^\d+(?:[.\-]\d+)*\.?\s+")
 
 
 def strip_stage_number(text):
@@ -446,9 +451,18 @@ def to_column_values(parsed, columns=None, installer_item_ids=None):
     # None otherwise; a zero drags the new-business target average down (§4.1).
     put("acv", v_number(_nonzero(_get(parsed, "acv"))))
 
-    # Order Type stays untouched: Rental vs Outright is a commercial term of
-    # the deal, not something the eOrder states, so the field is filled in by
-    # hand (see config.WRITE_ORDER_TYPE).
+    # The eOrder's reason for the order, on its own column (Damon, 24 Aug).
+    #
+    # Order Type stays untouched. His list pairs the reason with the commercial
+    # term — "New Business | Rental" against "New Business | Outright" — and
+    # carries kinds the eOrder never states (Pilot, Migration), so it is a
+    # human choice and writing half of it there would be worse than writing
+    # nothing. This column is the half the eOrder can actually answer.
+    put("order_reason", v_status(_get(parsed, "order_reason")))
+
+    # The old route to the same value, kept off. Left in place rather than
+    # deleted so a board that really does want the reason in Order Type has a
+    # switch, but it must never be on at the same time as the column above.
     if config.WRITE_ORDER_TYPE:
         put("order_type", v_status(_get(parsed, "order_reason")))
 

@@ -172,6 +172,9 @@ _DEFAULT_COLUMNS = {
     # escalation is skipped and reported rather than guessed at.
     "order_status": None,
     "order_type": "order_type9",
+    # The eOrder's reason for the order (New Business, Add-On, Upsell, ...).
+    # Separate from order_type, which stays a human choice — see columns.py.
+    "order_reason": None,
     "platform": "platform1",
     "migration_required": "migration_required",
     "order_date": "date3",

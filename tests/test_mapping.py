@@ -670,6 +670,32 @@ def test_a_real_dealer_commission_is_still_written():
 
 # -- numbered workflow labels (Navtek's board, 24 Aug) ----------------------
 
+def test_a_numbered_label_with_a_trailing_dot_matches():
+    """The regression from Damon's own test. "6.1 Installer Esc." matched
+    because ".1" satisfied the decimal group, but "4. Order Placed" left the
+    dot behind and stripped to "4 order placed" — so the single label he had
+    asked for was the one that still did not land."""
+    labels = {"c": ["1. New opportunity", "4. Order Placed", "7. Installed"]}
+    aligned, dropped = mapping.align_status_values(
+        {"c": {"label": "Order placed"}}, labels)
+    assert aligned["c"] == {"label": "4. Order Placed"}
+    assert dropped == []
+
+
+def test_stage_numbers_of_every_shape_on_the_live_board_strip():
+    for label, expected in (
+        ("4. Order Placed", "order placed"),
+        ("6.1 Installer Esc.", "installer esc"),
+        ("1. New opportunity", "new opportunity"),
+        ("2 Booked", "booked"),
+        ("1.0 Order Placed", "order placed"),
+        # Unnumbered labels must survive untouched.
+        ("Order Roadblock", "order roadblock"),
+        ("CSS Denied Order", "css denied order"),
+    ):
+        assert mapping.strip_stage_number(label) == expected, label
+
+
 def test_a_label_matches_through_its_workflow_number():
     """Navtek number every stage — "1.0 Order Placed", "6.1 Installer Esc." —
     so a label asked for by name alone never matched and was dropped."""
@@ -703,3 +729,15 @@ def test_two_differently_numbered_stages_never_collapse_together():
     aligned, _ = mapping.align_status_values({"c": {"label": "Booked"}}, labels)
     assert aligned["c"] == {"label": "1.0 Booked"}
     assert mapping.strip_stage_number("2.0 Booked In") == "booked in"
+
+
+# -- Order Reason vs Order Type (Damon, 24 Aug) -----------------------------
+
+def test_the_order_reason_is_written_and_order_type_is_not():
+    """Order Type pairs the reason with Rental vs Outright and carries kinds
+    the eOrder never states, so it stays a human choice."""
+    cols = {"order_reason": "color_reason", "order_type": "color_type"}
+    values = mapping.to_column_values(
+        {"opportunity_id": "X", "company": "Y", "order_reason": "Add-On"}, cols)
+    assert values["color_reason"] == {"label": "Add-On"}
+    assert "color_type" not in values

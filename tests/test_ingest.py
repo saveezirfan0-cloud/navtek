@@ -56,10 +56,18 @@ BOARD_COLUMNS = [
     {"id": "numeric_installcomm", "title": "Install Commission", "type": "numbers"},
     # The team's own working status. "6.1 Installer Esc." is FIRST, which is
     # why every new row inherited it on the live board.
+    # Damon's real label list off the live board — every stage numbered, and
+    # "4. Order Placed" carrying the trailing dot that used to defeat matching.
     {"id": "color_order", "title": "Status", "type": "status",
      "settings_str": json.dumps(
-         {"labels": {"1": "6.1 Installer Esc.", "2": "Order placed",
-                     "3": "2.0 Booked"}})},
+         {"labels": {"1": "1. New opportunity", "2": "4. Order Placed",
+                     "3": "6.1 Installer Esc.", "4": "7. Installed",
+                     "5": "Order Roadblock"}})},
+    {"id": "color_reason", "title": "Order Reason", "type": "status",
+     "settings_str": json.dumps(
+         {"labels": {"1": "New Business", "2": "Add-On", "3": "Upsell",
+                     "4": "Change of Ownership", "5": "Service Only Renewal",
+                     "6": "Hardware Only (Replacement unit)"}})},
     {"id": "date_order", "title": "Order Date", "type": "date"},
     {"id": "subtasks_1", "title": "Subitems", "type": "subtasks",
      "settings_str": json.dumps({"boardIds": [777]})},
@@ -1114,11 +1122,14 @@ def test_acv_stays_empty_on_an_order_reason_that_earns_none():
 
 
 def test_the_first_read_stamps_order_placed():
-    """A new row inherits the board's first label — "6.1 Installer Esc." — so
-    every brand new order read as a stalled job."""
+    """Written as the BOARD's own spelling — "4. Order Placed". Damon numbers
+    every stage, and the trailing dot after a single digit is what defeated
+    matching when he tested it: "4. Order Placed" stripped to "4 order placed"
+    while "6.1 Installer Esc." worked, so the one label he asked for was the
+    one that still did not land."""
     result, monday, _ = run(KANE)
     assert result["ok"]
-    assert monday.written["color_order"] == {"label": "Order placed"}
+    assert monday.written["color_order"] == {"label": "4. Order Placed"}
 
 
 def test_a_later_read_never_drags_the_working_status_backwards(monkeypatch):
@@ -1127,7 +1138,7 @@ def test_a_later_read_never_drags_the_working_status_backwards(monkeypatch):
     monkeypatch.setattr(config, "ALLOW_DUPLICATE_FILES", True)
     store = FakeStore()
     run(KANE, store=store)
-    monday = FakeMonday(blob(KANE), existing_values={"color_order": "2.0 Booked"})
+    monday = FakeMonday(blob(KANE), existing_values={"color_order": "7. Installed"})
     result, monday, _ = run(KANE, store=store, monday=monday)
     assert result["ok"]
     assert "color_order" not in monday.written
@@ -1158,3 +1169,37 @@ def test_install_arranged_by_is_never_written():
     assert result["ok"]
     assert "color_arranged" not in monday.written
     assert not any("color_arranged" in v for _, v in monday.written_to)
+
+
+# -- Order Reason, on its own column (Damon, 24 Aug) ------------------------
+
+def test_the_eorders_order_reason_lands_on_its_own_column():
+    result, monday, _ = run(KANE)
+    assert result["ok"]
+    assert monday.written["color_reason"] == {"label": "New Business"}
+
+
+def test_a_multi_site_add_on_reads_as_add_on():
+    """"Add-On" is how the eOrder spells Add to Fleet."""
+    result, monday, _ = run("Qualityvend_Pty_Ltd__4_05_2026__EOrder.xlsx")
+    assert result["ok"]
+    assert monday.written["color_reason"] == {"label": "Add-On"}
+
+
+def test_order_type_is_never_written():
+    """Damon's Order Type pairs the reason with Rental vs Outright and carries
+    kinds the eOrder never states (Pilot, Migration). His staff choose it."""
+    class WithOrderType(FakeMonday):
+        def board_columns(self, board_id):
+            if str(board_id) == str(SUB_BOARD_ID):
+                return list(self.sub_columns)
+            return BOARD_COLUMNS + [
+                {"id": "color_ordertype", "title": "Order Type", "type": "status",
+                 "settings_str": json.dumps({"labels": {
+                     "1": "New Business | Rental",
+                     "2": "New Business | Outright", "3": "Pilot"}})}]
+
+    result, monday, _ = run(KANE, monday=WithOrderType(blob(KANE)))
+    assert result["ok"]
+    assert "color_ordertype" not in monday.written
+    assert not any("color_ordertype" in v for _, v in monday.written_to)
