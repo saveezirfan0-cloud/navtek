@@ -377,6 +377,26 @@ def sync_installers(monday, store, installers_board_id=None):
     return {"synced": len(rows), "skipped_no_token": skipped}
 
 
+def hook_suffix():
+    """"?hook=<secret>", percent-encoded, or "" when no secret is set.
+
+    The secret is chosen by whoever deploys this, and the obvious way to make
+    one — `openssl rand -base64 32` — routinely produces "+", "/" and "=".
+    Dropped into a query string raw, "+" decodes back as a space and "&" ends
+    the parameter, so the registered URL carries a token that can never match
+    and every delivery is turned away. That is the same outage twice, the
+    second time caused by rotating the secret to a perfectly sensible value.
+
+    Encoding here is symmetric with the check: request.query_params is already
+    decoded by the time _webhook_rejection compares it.
+    """
+    from urllib.parse import quote
+
+    if not config.WEBHOOK_SECRET:
+        return ""
+    return f"?hook={quote(config.WEBHOOK_SECRET, safe='')}"
+
+
 def eorder_column_id(monday, board_id=None):
     """The eOrder file column, from config or looked up live.
 
@@ -393,7 +413,7 @@ def register_webhook(monday, url, board_id=None, file_column_id=None, force=Fals
     # deliveries without it. Registered here so setup step 4 is the only thing
     # to re-run after setting the variable.
     if config.WEBHOOK_SECRET and "hook=" not in url:
-        url = f"{url}?hook={config.WEBHOOK_SECRET}"
+        url = f"{url}{hook_suffix()}"
     column_id = file_column_id or eorder_column_id(monday, board_id)
     if not column_id:
         raise ValueError(
@@ -465,7 +485,7 @@ def register_flow_webhooks(monday, base_url, board_id=None, force=False):
 
     # Same ?hook= hardening as register_webhook — every one of these endpoints
     # is reachable from the open internet and drives monday writes.
-    suffix = f"?hook={config.WEBHOOK_SECRET}" if config.WEBHOOK_SECRET else ""
+    suffix = hook_suffix()
     wanted = [
         ("eorder_file", f"{base}/api/py/eorder{suffix}"),
         ("installer", f"{base}/api/py/installer-change{suffix}"),
@@ -512,7 +532,7 @@ def register_installer_webhooks(monday, base_url, installers_board_id=None,
     if not board_id:
         return {"registered": [],
                 "skipped": "no Installer Accounts board yet — run step A first"}
-    suffix = f"?hook={config.WEBHOOK_SECRET}" if config.WEBHOOK_SECRET else ""
+    suffix = hook_suffix()
     url = f"{base_url.rstrip('/')}/api/py/installer-account-change{suffix}"
     existing = {h.get("event"): h for h in monday.webhooks(board_id)}
     registered = []

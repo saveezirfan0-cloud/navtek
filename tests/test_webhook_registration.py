@@ -122,3 +122,43 @@ def test_board_level_installer_webhooks_are_replaced_under_force(monkeypatch):
     assert sorted(monday.deleted) == ["7", "8"]
     assert all(r.get("replaced") for r in result["registered"])
     assert all("hook=new" in url for url, _ in monday.created)
+
+
+# -- a secret with URL-special characters (24 Aug) --------------------------
+
+def test_a_base64_secret_is_encoded_into_the_registered_url(monkeypatch):
+    """`openssl rand -base64 32` is the obvious way to make one of these, and
+    it routinely produces "+", "/" and "=". Raw in a query string, "+" decodes
+    back as a space and never matches — the same outage again, caused by
+    rotating the secret to a perfectly sensible value."""
+    monkeypatch.setattr(config, "WEBHOOK_SECRET", "a+b/c=d&e")
+    monkeypatch.setattr(config, "ORDERS_BOARD_ID", BOARD)
+    monday = FakeMonday()
+    bootstrap.register_webhook(monday, "https://app/api/py/eorder",
+                               board_id=BOARD, file_column_id="file_eorder")
+    url, _ = monday.created[0]
+    assert url == "https://app/api/py/eorder?hook=a%2Bb%2Fc%3Dd%26e"
+
+
+def test_the_encoded_token_survives_the_round_trip(monkeypatch):
+    """What monday sends back must compare equal to the configured secret —
+    the guard reads an already-decoded query parameter."""
+    from urllib.parse import urlparse, parse_qs
+
+    monkeypatch.setattr(config, "WEBHOOK_SECRET", "a+b/c=d&e")
+    monkeypatch.setattr(config, "ORDERS_BOARD_ID", BOARD)
+    monday = FakeMonday()
+    bootstrap.register_webhook(monday, "https://app/api/py/eorder",
+                               board_id=BOARD, file_column_id="file_eorder")
+    url, _ = monday.created[0]
+    assert parse_qs(urlparse(url).query)["hook"] == ["a+b/c=d&e"]
+
+
+def test_a_url_safe_secret_is_left_readable(monkeypatch):
+    monkeypatch.setattr(config, "WEBHOOK_SECRET", "G-gE3rxdmQzaVnOc0IFgHLeba")
+    monkeypatch.setattr(config, "ORDERS_BOARD_ID", BOARD)
+    monday = FakeMonday()
+    bootstrap.register_webhook(monday, "https://app/api/py/eorder",
+                               board_id=BOARD, file_column_id="file_eorder")
+    url, _ = monday.created[0]
+    assert url.endswith("?hook=G-gE3rxdmQzaVnOc0IFgHLeba")
