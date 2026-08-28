@@ -60,6 +60,13 @@ def test_an_existing_registration_is_left_alone_by_default():
     assert result["already_registered"] is True
     assert monday.created == []
     assert monday.deleted == []
+    # It must NOT claim the registration carries the URL we wanted. monday
+    # does not report a webhook's URL, so saying so would read as proof that
+    # the ?hook= token is current — the one thing this branch cannot know.
+    assert "url" not in result
+    assert result["url_wanted"] == "https://app/api/py/eorder?hook=new"
+    assert "unknown" in result["url_in_place"]
+    assert "Re-register" in result["note"]
 
 
 def test_force_replaces_a_registration_carrying_a_stale_hook_token():

@@ -422,9 +422,20 @@ def _register_column_webhook(monday, board_id, column_id, url, force=False):
             if not force:
                 return {
                     "webhook_id": hook["id"],
-                    "url": url,
+                    # The URL we WOULD register, not the one monday holds.
+                    # monday does not return a webhook's URL, so this branch
+                    # cannot report the real one — and echoing the wanted URL
+                    # unqualified reads as confirmation that the registration
+                    # carries the current ?hook= token, which is precisely
+                    # what it does not establish.
+                    "url_wanted": url,
+                    "url_in_place": "unknown — monday does not report it",
                     "column_id": column_id,
                     "already_registered": True,
+                    "note": "Left as it was. If WEBHOOK_SECRET has changed "
+                            "since this was registered, its ?hook= token is "
+                            "stale and every delivery is being turned away — "
+                            "use Re-register to replace it.",
                 }
             monday.delete_webhook(hook["id"])
             hook = monday.create_webhook(
