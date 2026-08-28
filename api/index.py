@@ -87,6 +87,40 @@ def health(fresh: bool = Query(default=False)):
     """
     _store = Store()
     _rejections = _store.recent_rejections()
+
+    def _binding_warning(cols):
+        """The board-access check /health was not making.
+
+        Every managed column unmapped is not twenty small problems, it is one
+        big one: the token cannot see the board. It reads as healthy otherwise
+        — the secrets are set, the database answers — so "ok": true was
+        reported while the automation could not write a single field, which is
+        the exact silence this app is built to refuse.
+
+        monday answers a board the token has no access to with an empty column
+        list rather than an error, so this is indistinguishable from a real
+        read at the API level. The count is what tells them apart.
+        """
+        managed = [k for k in columns_mod.MANAGED if not cols.get(k)]
+        if not managed:
+            return []
+        if len(managed) == len(columns_mod.MANAGED) and not any(cols.values()):
+            return [
+                f"No column on board {config.ORDERS_BOARD_ID} could be "
+                f"resolved — not one, including the ones that already exist "
+                f"there. monday returns an empty column list for a board the "
+                f"API token cannot see, so this is almost always access, not "
+                f"configuration: check ORDERS_BOARD_ID against the board's "
+                f"URL, then that MONDAY_TOKEN's monday user is a subscriber "
+                f"of that board with edit rights. A guest or viewer can read "
+                f"nothing and create nothing."
+            ]
+        return [
+            f"{len(managed)} column(s) the automation writes to are not on "
+            f"board {config.ORDERS_BOARD_ID}: {', '.join(sorted(managed))}. "
+            f"Run setup step 2 to create them; anything already there under "
+            f"another name is reused, not duplicated."
+        ]
     try:
         cols = columns_mod.resolved(Monday(), force=fresh)
         source = "board" if not config.COLUMNS.get("eorder_file") else "COLUMN_IDS"
@@ -121,7 +155,7 @@ def health(fresh: bool = Query(default=False)):
              f"changed, the registered URL still carries the old ?hook= token "
              f"— re-run setup step 4 with Re-register."]
             if _rejections else []
-        ) + (
+        ) + _binding_warning(cols) + (
             ["MONDAY_SIGNING_SECRET is set, but monday only signs webhooks "
              "created through an app's OAuth token. If these were registered "
              "with a personal API token they arrive unsigned and this secret "

@@ -302,3 +302,56 @@ def test_health_says_nothing_about_rejections_when_there_are_none(monkeypatch):
     data = client().get("/api/py/health").json()
     assert data["rejected_deliveries"] == []
     assert not any("turned away" in w for w in data["config_warnings"])
+
+
+# -- "ok": true while nothing is bound (live board, 24 Aug) ------------------
+
+class _QuietStore:
+    enabled = True
+    degraded = None
+
+    def ping(self):
+        return {"ok": True, "state": "ready"}
+
+    def recent_rejections(self, hours=48, limit=20):
+        return []
+
+
+def test_health_calls_out_a_board_it_cannot_see(monkeypatch):
+    """Every column unmapped is one problem, not twenty: the token cannot see
+    the board. monday answers a board it has no access to with an empty column
+    list rather than an error, so /health reported "ok": true while the
+    automation could not write a single field."""
+    monkeypatch.setattr(_module, "Store", lambda: _QuietStore())
+    monkeypatch.setattr(_module.columns_mod, "resolved",
+                        lambda *a, **k: {k2: None for k2 in _module.config.COLUMNS})
+    data = client().get("/api/py/health").json()
+
+    warning = " ".join(data["config_warnings"])
+    assert "No column" in warning
+    assert "cannot see" in warning
+    assert "subscriber" in warning and "edit rights" in warning
+    assert data["ok"] is False
+
+
+def test_health_asks_for_setup_step_2_when_only_some_are_missing(monkeypatch):
+    """A partly-configured board is a different instruction from an
+    inaccessible one, and sending someone to the wrong one costs an hour."""
+    cols = {k: None for k in _module.config.COLUMNS}
+    cols["opportunity_id"] = "text_1"
+    cols["order_status"] = "color_1"
+    monkeypatch.setattr(_module, "Store", lambda: _QuietStore())
+    monkeypatch.setattr(_module.columns_mod, "resolved", lambda *a, **k: cols)
+    data = client().get("/api/py/health").json()
+
+    warning = " ".join(data["config_warnings"])
+    assert "setup step 2" in warning
+    assert "No column" not in warning
+
+
+def test_health_stays_quiet_once_every_column_binds(monkeypatch):
+    cols = {k: f"id_{k}" for k in _module.config.COLUMNS}
+    monkeypatch.setattr(_module, "Store", lambda: _QuietStore())
+    monkeypatch.setattr(_module.columns_mod, "resolved", lambda *a, **k: cols)
+    data = client().get("/api/py/health").json()
+    assert not any("column" in w for w in data["config_warnings"])
